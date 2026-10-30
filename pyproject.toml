@@ -32,6 +32,10 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/voice_input"]
+include = [
+    "src/voice_input/models/campp.onnx",
+    "src/voice_input/models/campp.onnx.data",
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
