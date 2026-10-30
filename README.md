@@ -45,7 +45,10 @@ VOICE_IN_ASR_API_KEY=填写语音识别服务的API密钥
 | 配置项 | 用途 |
 | --- | --- |
 | VOICE_IN_DEVICE | 指定麦克风设备名称；不填用系统默认输入设备 |
-| VOICE_IN_ASR_ENDPOINT_INCLUDES_VAD | ASR 服务自身已做 VAD 分句时置 true |
+| VOICE_IN_VAD_SPEECH_THRESHOLD | VAD 语音判定能量阈值（默认 300） |
+| VOICE_IN_VAD_TRAILING_SILENCE_FRAMES | 判定一句结束所需的连续静音帧数（默认 20） |
+| VOICE_IN_VAD_MAX_FRAMES | 单段语音最大帧数（默认 1500） |
+| VOICE_IN_VAD_PRE_ROLL_FRAMES | 语音起始前保留的前摇帧数（默认 5） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
 
 ## 启动

@@ -7,3 +7,4 @@
 - 职责边界：采集 + VAD 端点检测 + ASR 识别 -> 发送 waycast input 帧；不参与话权/打断（ADR-0011）。
 - 实现 config / capture / vad / asr / hub_client / main 源码模块与对应测试。
 - 验证：pytest 23 用例通过，ruff check 通过，basedpyright strict 0 错误。
+- 修正 README 配置表：移除不存在的 VOICE_IN_ASR_ENDPOINT_INCLUDES_VAD，补全 VAD 配置项。
