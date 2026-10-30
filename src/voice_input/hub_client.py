@@ -11,7 +11,9 @@ logic; turn-taking decisions belong to the core Agent (ADR-0011).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -25,6 +27,10 @@ MODULE_NAME = "voice_input"
 CAPABILITY_INPUT_DESCRIPTION = (
     "unified voice transcriptions from the microphone: captured via VAD endpoint "
     "detection and transcribed by an OpenAI-compatible ASR service"
+)
+CAPABILITY_STATUS_DESCRIPTION = (
+    "dynamic speaker identification state: speaker_enabled, model_revision, "
+    "known_speaker_count, onnx_provider"
 )
 
 
@@ -51,12 +57,21 @@ class InputClient:
         token: str,
         tls_ca_path: str | None = None,
         name: str = MODULE_NAME,
+        status_provider: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
+        """``status_provider`` answers status_query frames when not None.
+
+        Passing a provider also advertises the optional status capability
+        (waycast A15/A19); the provider is called on every query and its dict
+        becomes the status_result payload.
+        """
         self._hub_url = hub_url
         self._token = token
         self._tls_ca = tls_ca_path
         self._name = name
+        self._status_provider = status_provider
         self._ws: Any = None
+        self._reader: asyncio.Task[None] | None = None
 
     @property
     def name(self) -> str:
@@ -76,11 +91,46 @@ class InputClient:
         return kwargs
 
     async def _capability(self) -> dict[str, Any]:
-        return {
+        capability: dict[str, Any] = {
             "name": self._name,
             "kind": "input",
             "input": {"description": CAPABILITY_INPUT_DESCRIPTION},
         }
+        if self._status_provider is not None:
+            capability["status"] = {
+                "enabled": True,
+                "description": CAPABILITY_STATUS_DESCRIPTION,
+            }
+        return capability
+
+    async def _read_loop(self) -> None:
+        """Answer status_query frames and surface remote connection closure.
+
+        The hub otherwise sends the module nothing, but a closed socket would
+        otherwise go unnoticed until the next send; closing from here lets the
+        producer see the error and reconnect.
+        """
+        try:
+            while True:
+                frame = parse_frame(await self._ws.recv())
+                if frame["type"] == "status_query":
+                    assert self._status_provider is not None
+                    reply = make_frame(
+                        "status_result",
+                        self._name,
+                        self._status_provider(),
+                        request_id=frame["request_id"],
+                    )
+                    await self._ws.send(dumps(reply))
+        except (websockets.ConnectionClosed, ConnectionError, OSError):
+            LOGGER.debug("hub connection closed (status reader)")
+        except Exception as exc:
+            LOGGER.warning("status reader error: %s", exc)
+        finally:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
 
     async def __aenter__(self) -> "InputClient":
         uri = self._ws_uri()
@@ -103,6 +153,8 @@ class InputClient:
         except Exception as exc:
             await self._ws.close()
             raise HubConnectionError("hub handshake failed") from exc
+        if self._status_provider is not None:
+            self._reader = asyncio.create_task(self._read_loop())
         LOGGER.info("%s admitted to waycast hub (kind=input)", self._name)
         return self
 
@@ -124,6 +176,13 @@ class InputClient:
         await self._ws.send(dumps(make_frame("input", self._name, payload)))
 
     async def __aexit__(self, *exc_info: Any) -> None:
+        if self._reader is not None:
+            self._reader.cancel()
+            try:
+                await self._reader
+            except asyncio.CancelledError:
+                pass
+            self._reader = None
         if self._ws is not None:
             await self._ws.close()
             self._ws = None

@@ -64,3 +64,66 @@ def test_hub_rejects_capability():
 
     asyncio.run(scenario())
 
+
+def test_status_capability_and_query_roundtrip():
+    """A status_query frame is answered with a status_result carrying the provider payload."""
+    received = []
+
+    async def handler(ws):
+        first = await ws.recv()
+        frame = parse_frame(first)
+        assert frame["payload"]["status"]["enabled"] is True
+        await ws.send(dumps(make_frame("capability", "voice_input", {"accepted": True})))
+        await ws.send(
+            dumps(make_frame("status_query", "voice_input", {}, request_id="q-1"))
+        )
+        reply = parse_frame(await ws.recv())
+        received.append(reply)
+        await ws.close()
+
+    async def scenario():
+        server = await websockets.serve(handler, "127.0.0.1", 0)
+        url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+
+        def provider() -> dict[str, object]:
+            return {"speaker_enabled": True, "known_speaker_count": 2}
+
+        async with InputClient(hub_url=url, token="t", status_provider=provider):
+            await asyncio.sleep(0.2)  # let the reader task answer before teardown
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run(scenario())
+    assert len(received) == 1
+    reply = received[0]
+    assert reply["type"] == "status_result"
+    assert reply["request_id"] == "q-1"
+    assert reply["payload"]["speaker_enabled"] is True
+    assert reply["payload"]["known_speaker_count"] == 2
+
+
+def test_no_status_capability_without_provider():
+    """Without a status_provider the capability carries no status key (ADR-0008 default)."""
+    seen: dict = {}
+
+    async def handler(ws):
+        frame = parse_frame(await ws.recv())
+        seen.update(frame["payload"])
+        await ws.send(dumps(make_frame("capability", "voice_input", {"accepted": True})))
+        # keep the connection open until the client exits
+        try:
+            await ws.recv()
+        except websockets.ConnectionClosed:
+            pass
+
+    async def scenario():
+        server = await websockets.serve(handler, "127.0.0.1", 0)
+        url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}"
+        async with InputClient(hub_url=url, token="t"):
+            pass
+        server.close()
+        await server.wait_closed()
+
+    asyncio.run(scenario())
+    assert "status" not in seen
+
