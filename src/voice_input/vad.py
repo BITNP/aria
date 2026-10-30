@@ -1,0 +1,114 @@
+"""Speech endpoint detection for fixed 20 ms PCM16 mono frames (16 kHz).
+
+This is a pure energy-based fallback VAD with trailing-silence endpointing and a hard
+frame cap.  It intentionally stays free of model dependencies so the pipeline can run
+headless in tests; a model-backed VAD may be added behind the same push() interface.
+
+A segment starts at the first speech frame (plus any preroll) and ends after
+trailing_silence_frames consecutive non-speech frames or when max_frames is reached.
+No partial/final semantics exist here: the module decides when a turn is complete and
+every emitted endpoint becomes one waycast input frame (ADR-0011).
+"""
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass
+from typing import Final
+
+SAMPLE_RATE_HZ: Final = 16_000
+FRAME_SAMPLES: Final = 320  # 20 ms at 16 kHz
+FRAME_BYTES: Final = 640  # 320 int16 samples = 640 bytes
+
+@dataclass(frozen=True, slots=True)
+class SpeechEndpoint:
+    """One detected utterance: raw PCM16 mono bytes plus its start sample timestamp."""
+
+    pcm16le: bytes
+    start_sample: int
+
+
+class EndpointDetector:
+    """Aggregates 20 ms PCM16 frames into speech endpoints."""
+
+    def __init__(
+        self,
+        *,
+        threshold: int = 300,
+        trailing_silence_frames: int = 20,
+        max_frames: int = 1500,
+        pre_roll_frames: int = 5,
+    ) -> None:
+        if max_frames < 1:
+            raise ValueError("max_frames must be positive")
+        if not 0 <= pre_roll_frames < max_frames:
+            raise ValueError("pre_roll_frames must be below max_frames")
+        if trailing_silence_frames < 1:
+            raise ValueError("trailing_silence_frames must be positive")
+        self._threshold = threshold
+        self._trailing_silence_frames = trailing_silence_frames
+        self._max_frames = max_frames
+        self._pre_roll: deque[tuple[bytes, int]] = deque(maxlen=pre_roll_frames)
+        self._frames: list[bytes] = []
+        self._start_sample: int | None = None
+        self._silence = 0
+
+    def is_speech(self, frame: bytes) -> bool:
+        """Return whether a single 20 ms frame looks like speech by mean absolute energy."""
+        if len(frame) != FRAME_BYTES:
+            raise ValueError(f"frame must be exactly {FRAME_BYTES} PCM16 bytes")
+        return _mean_energy(frame) >= self._threshold
+
+    def push(
+        self, frame: bytes, sample: int, *, speech: bool | None = None
+    ) -> SpeechEndpoint | None:
+        """Feed one frame; return a completed endpoint when a turn ends, else None."""
+        if len(frame) != FRAME_BYTES:
+            raise ValueError(f"frame must be exactly {FRAME_BYTES} PCM16 bytes")
+        is_speech = self.is_speech(frame) if speech is None else speech
+        if is_speech and self._start_sample is None:
+            self._start_sample = self._pre_roll[0][1] if self._pre_roll else sample
+            self._frames.extend(frame for frame, _ in self._pre_roll)
+            self._pre_roll.clear()
+        if self._start_sample is None:
+            self._pre_roll.append((frame, sample))
+            return None
+        self._frames.append(frame)
+        self._silence = 0 if is_speech else self._silence + 1
+        if (
+            len(self._frames) >= self._max_frames
+            or self._silence >= self._trailing_silence_frames
+        ):
+            return self.flush()
+        return None
+
+    def flush(self) -> SpeechEndpoint | None:
+        """Force-end the current utterance; None if none is in progress."""
+        if self._start_sample is None:
+            return None
+        endpoint = SpeechEndpoint(
+            pcm16le=b"".join(self._frames), start_sample=self._start_sample
+        )
+        self._frames = []
+        self._start_sample = None
+        self._silence = 0
+        return endpoint
+
+    def reset(self) -> None:
+        self._pre_roll.clear()
+        self._frames.clear()
+        self._start_sample = None
+        self._silence = 0
+
+
+def _mean_energy(frame: bytes) -> int:
+    samples = memoryview(frame).cast("h")
+    return sum(abs(sample) for sample in samples) // len(samples)
+
+
+__all__ = [
+    "SpeechEndpoint",
+    "EndpointDetector",
+    "SAMPLE_RATE_HZ",
+    "FRAME_SAMPLES",
+    "FRAME_BYTES",
+]
