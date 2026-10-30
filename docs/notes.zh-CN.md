@@ -8,3 +8,5 @@
 - 实现 config / capture / vad / asr / hub_client / main 源码模块与对应测试。
 - 验证：pytest 23 用例通过，ruff check 通过，basedpyright strict 0 错误。
 - 修正 README 配置表：移除不存在的 VOICE_IN_ASR_ENDPOINT_INCLUDES_VAD，补全 VAD 配置项。
+- 移除对 waycast / openai / numpy 的包依赖：模块与核心按微服务边界仅通过网络通信，wire 契约在 src/voice_input/wire.py 本地实现（纯 JSON over WebSocket）。
+- 验证更新：pytest 31 用例通过（新增 wire 协议测试 8 个），ruff check 通过，basedpyright strict 0 错误。

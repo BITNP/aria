@@ -8,10 +8,7 @@ authors = [
     { name = "noteas", email = "3818384646@qq.com" }
 ]
 dependencies = [
-    "waycast>=0.1.0",
     "httpx>=0.28.1",
-    "numpy>=2.0,<3",
-    "openai>=2,<4",
     "python-dotenv>=1,<2",
     "sounddevice==0.5.5",
     "websockets==16.1.1",
@@ -61,5 +58,3 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = []
 
-[tool.uv.sources]
-waycast = { path = "../waycast", editable = true }

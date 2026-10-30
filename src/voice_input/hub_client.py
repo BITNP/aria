@@ -1,9 +1,10 @@
 """Waycast hub connection for an input module.
 
-Implements the wire contract directly against waycast.wire (make_frame /
-parse_frame).  A module connects to the hub /ws/modules endpoint, advertises its
-capability as the first frame, and after the hub acknowledges it may send input
-frames over the same full-duplex connection (ADR-0008).
+A module connects to the hub /ws/modules endpoint, advertises its capability as
+the first frame, and after the hub acknowledges it may send input frames over
+the same full-duplex connection.  The wire contract (ADR-0008) is implemented
+locally in voice_input.wire as plain JSON; the module and the core are separate
+microservices that talk only over the network and share no Python package.
 
 This module is input-only: it never receives output_unit frames and holds no core
 logic; turn-taking decisions belong to the core Agent (ADR-0011).
@@ -15,7 +16,8 @@ from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import websockets
-from waycast.wire import make_frame, parse_frame
+
+from voice_input.wire import dumps, make_frame, parse_frame
 
 LOGGER = logging.getLogger(__name__)
 
@@ -88,12 +90,12 @@ class InputClient:
             raise HubConnectionError(f"cannot reach hub at {uri}: {exc}") from exc
         try:
             await self._ws.send(
-                make_frame("capability", self._name, await self._capability()).model_dump_json()
+                dumps(make_frame("capability", self._name, await self._capability()))
             )
             ack = parse_frame(await self._ws.recv())
-            if ack.type != "capability" or not ack.payload.get("accepted"):
+            if ack["type"] != "capability" or not ack["payload"].get("accepted"):
                 raise HubConnectionError(
-                    f"hub did not accept capability: {ack.model_dump_json()}"
+                    f"hub did not accept capability: {dumps(ack)}"
                 )
         except HubConnectionError:
             await self._ws.close()
@@ -119,7 +121,7 @@ class InputClient:
             "source": source,
             "metadata": metadata or {},
         }
-        await self._ws.send(make_frame("input", self._name, payload).model_dump_json())
+        await self._ws.send(dumps(make_frame("input", self._name, payload)))
 
     async def __aexit__(self, *exc_info: Any) -> None:
         if self._ws is not None:

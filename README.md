@@ -1,6 +1,6 @@
 # 树莓娘语音输入模块
 
-本仓库是树莓娘（Raspberry Girl）重构体系中的**语音输入模块**：负责麦克风采集、VAD 端点检测与 ASR 识别，并把识别结果作为一个 waycast 输入帧发送给核心。核心是 [waycast](../waycast/README.md)；本模块是它的一个输入模块（capability.kind = "input"），完全按 waycast 的 wire 契约（ADR-0008）工作，不包含任何核心逻辑。
+本仓库是树莓娘（Raspberry Girl）重构体系中的**语音输入模块**：负责麦克风采集、VAD 端点检测与 ASR 识别，并把识别结果作为一个 waycast 输入帧发送给核心。核心是 [waycast](../waycast/README.md)；本模块是它的一个输入模块（capability.kind = "input"），完全按 waycast 的 wire 契约（ADR-0008）工作，不包含任何核心逻辑。模块与核心是独立的微服务：两者之间只通过网络（WebSocket + wire JSON 帧）通信，本仓库不依赖 waycast 的任何 Python 包。
 
 ## 职责边界
 
@@ -13,7 +13,7 @@
 ## 与 waycast 的关系
 
 - 模块连接 waycast hub 的 /ws/modules，首帧发送 capability 广告（input-only），随后通过同一条连接发送 input 帧。
-- 帧格式、capability 结构、连接令牌均来自 waycast wire 协议（waycast/src/waycast/wire.py）；本仓库不修改协议。
+- 帧格式、capability 结构、连接令牌均来自 waycast wire 协议（waycast/src/waycast/wire.py）；本仓库在 src/voice_input/wire.py 本地实现该客户端侧契约（纯 JSON over WebSocket，无包依赖），不修改协议本身，互操作以 waycast 的实现为权威。
 - 本模块属于 ADR-0010 之外的独立输入模块；语音输入与弹幕/IM 输入是两个独立模块，共用一个核心。
 
 ## 运行前提
@@ -24,7 +24,7 @@
 
 ## 安装与配置
 
-同步依赖（本仓库与 waycast 仓库需在同一目录下，以可编辑方式引用 waycast）：
+同步依赖（本仓库不依赖 waycast 包，仅需各自的运行时依赖）：
 
 ```sh
 uv sync --locked
