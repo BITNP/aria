@@ -1,13 +1,20 @@
 """Voice input module entry point.
 
 Pipeline: microphone capture -> endpoint detection (VAD) -> ASR transcription ->
-waycast input frame.  Each detected utterance becomes exactly one input frame with no
-partial/final marking and no turn-taking involvement (ADR-0011): the module decides
-only when an utterance is complete, the core decides everything else.
+speaker identification (ADR-0002) -> waycast input frame.  Each detected
+utterance becomes exactly one input frame with no partial/final marking and no
+turn-taking involvement (ADR-0011): the module decides only when an utterance
+is complete, the core decides everything else.
 
-The capture and ASR loops are decoupled by a bounded queue so a slow recognizer never
-backs up the microphone path; when the queue is full a new endpoint is dropped and
-logged, matching the backpressure contract of the hub (ADR-0006 for inputs).
+Identified speakers travel into the Agent as a content prefix
+(``【说话人spk_N】文本``) while ``stable_prefix`` stays pure ASR text; when the
+bundled speaker model cannot be loaded the module degrades to no-ID mode and
+text is forwarded unlabeled.
+
+The capture and ASR loops are decoupled by a bounded queue so a slow recognizer
+never backs up the microphone path; when the queue is full a new endpoint is
+dropped and logged, matching the backpressure contract of the hub (ADR-0006
+for inputs).
 """
 from __future__ import annotations
 
@@ -22,6 +29,11 @@ from voice_input.asr import OpenAICompatibleAsr
 from voice_input.capture import PortAudioMic
 from voice_input.config import load_settings
 from voice_input.hub_client import MODULE_NAME, HubConnectionError, InputClient
+from voice_input.speaker import (
+    SpeakerIdentifier,
+    build_speaker_identifier,
+    disabled_status,
+)
 from voice_input.vad import EndpointDetector
 
 LOGGER = logging.getLogger(__name__)
@@ -31,9 +43,37 @@ MAX_TEXT_LENGTH = 8192
 HUB_RECONNECT_DELAY_SECONDS = 3.0
 
 
+async def _send_one(
+    ws: InputClient,
+    speaker: SpeakerIdentifier | None,
+    pcm: bytes,
+    speech_ms: int,
+    *,
+    text: str,
+) -> None:
+    """Forward one utterance as an input frame, prefixing the speaker id when labeled.
+
+    A raising embedder (e.g. a transient model fault) must never stop the
+    pipeline: the utterance is still delivered, just without a label.
+    """
+    content = text
+    if speaker is not None:
+        try:
+            spk = speaker.identify(pcm, speech_ms)
+        except Exception:
+            LOGGER.warning("speaker identification failed; sending unlabeled", exc_info=True)
+        else:
+            if spk is not None:
+                content = f"【说话人{spk}】{text}"
+                LOGGER.debug("labeled utterance speaker=%s", spk)
+    metadata = {"speech_duration_ms": speech_ms, "source": "asr", "stable_prefix": text}
+    await ws.send_input(content, source="asr", metadata=metadata)
+
+
 async def _recognize_and_send(
     ws: InputClient,
     asr: OpenAICompatibleAsr,
+    speaker: SpeakerIdentifier | None,
     queue: asyncio.Queue[tuple[bytes, int]],
 ) -> None:
     """Consume endpoints from the queue: transcribe and forward one input frame per utterance."""
@@ -48,8 +88,7 @@ async def _recognize_and_send(
             if len(text) > MAX_TEXT_LENGTH:
                 LOGGER.warning("transcript too long (%d chars); dropping", len(text))
                 continue
-            metadata = {"speech_duration_ms": speech_ms, "source": "asr", "stable_prefix": text}
-            await ws.send_input(text, source="asr", metadata=metadata)
+            await _send_one(ws, speaker, pcm, speech_ms, text=text)
             LOGGER.info("sent voice input (%d chars)", len(text))
         finally:
             queue.task_done()
@@ -89,11 +128,17 @@ async def _collect(
 
 async def _run_with_hub(settings: Any) -> None:
     """One hub connection lifetime: admit, then run capture + ASR until the connection drops."""
+    speaker = build_speaker_identifier()
+
+    def status_provider() -> dict[str, object]:
+        return speaker.status() if speaker is not None else disabled_status()
+
     async with InputClient(
         hub_url=settings.hub_url,
         token=settings.hub_token,
         tls_ca_path=settings.tls_ca_path,
         name=MODULE_NAME,
+        status_provider=status_provider,
     ) as ws:
         asr = OpenAICompatibleAsr(
             settings.asr_endpoint,
@@ -112,7 +157,7 @@ async def _run_with_hub(settings: Any) -> None:
         try:
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(_collect(mic, enhancer, vad, queue))
-                tasks.create_task(_recognize_and_send(ws, asr, queue))
+                tasks.create_task(_recognize_and_send(ws, asr, speaker, queue))
         finally:
             await asr.aclose()
 
