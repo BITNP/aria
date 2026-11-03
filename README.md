@@ -36,7 +36,11 @@
 uv sync --locked
 ```
 
-创建 .env：
+创建 .env（全部键与默认值见 [.env.example](.env.example)，最少填四项）：
+
+```sh
+cp .env.example .env
+```
 
 ```dotenv
 WAYCAST_HUB_URL=ws://127.0.0.1:8000
