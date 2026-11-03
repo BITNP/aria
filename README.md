@@ -64,8 +64,9 @@ VOICE_IN_VAD_URL=http://127.0.0.1:8080
 
 - **Silero VAD（首选）**：`VOICE_IN_VAD_URL` 指向 audio.cpp 服务时启用。采集缓冲每
   `VOICE_IN_VAD_POLL_MS` 送一次 `POST /v1/tasks/run`（WAV base64，补齐到 512 样本的
-  整窗），得到语音分段；缓冲尾音超出最后分段末尾达到尾静音时长即判一句结束。低音量
-  语音不再被能量阈值截断。
+  整窗，请求 options 降低 `min_speech_duration_ms` 至 100ms），得到语音分段；缓冲尾音
+  超出最后分段末尾达到「尾静音时长 + 盲区余量（0.2s）」即判一句结束——盲区余量覆盖
+  服务端最短语音的可见性延迟，句中短暂停顿不会被误切，低音量语音不再被能量阈值截断。
 - **能量 VAD（兜底）**：默认路径；Silero 服务连续轮询失败后**永久降级**到它（日志
   warning），audio.cpp 挂掉不影响采集链路。恢复 Silero 需重启本模块。
 

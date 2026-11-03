@@ -72,7 +72,9 @@ def test_client_posts_task_run_with_512_aligned_wav():
 
     async def handler(request):
         seen["path"] = request.url.path
-        seen["model"] = json.loads(request.content)["model"]
+        body = json.loads(request.content)
+        seen["model"] = body["model"]
+        seen["options"] = body["request"].get("options")
         seen["samples"] = _posted_samples(request)
         return httpx.Response(200, json={"segments": [{"start_sample": 512, "end_sample": 1024}]})
 
@@ -87,6 +89,7 @@ def test_client_posts_task_run_with_512_aligned_wav():
     assert segments == [(512, 1024)]
     assert seen["path"] == "/v1/tasks/run"
     assert seen["model"] == "silero-vad"
+    assert seen["options"] == {"min_speech_duration_ms": 100}
     assert seen["samples"] == 512  # zero-padded to a whole streaming window
 
 
@@ -127,27 +130,27 @@ def test_client_raises_on_malformed_response():
 
 
 def test_endpoint_fires_after_trailing_silence_past_last_segment():
-    # Speech runs to 2000 samples before the buffer end; trailing threshold 2
-    # frames (640 samples) is exceeded, so the next poll must end the turn.
+    # Speech stays fixed at [1000, 5000]; the endpoint must fire once the
+    # buffer tail past 5000 reaches trailing (2 frames) + blind window (3200).
     async def handler(request):
-        samples = _posted_samples(request)
-        segments = [] if samples < 6_500 else [{"start_sample": 500, "end_sample": samples - 2_000}]
-        return httpx.Response(200, json={"segments": segments})
+        return httpx.Response(200, json={"segments": [
+            {"start_sample": 1_000, "end_sample": 5_000},
+        ]})
 
     endpointer = _endpointer(handler, trailing_silence_frames=2, min_speech_ms=250)
-    emitted = _feed_all(endpointer, [FRAME] * 21)
-    # Emission lands on the 20th feed: buffer 6400 samples, posted padded to
-    # 6656 → segment end 4656, tail 1744 ≥ 640, cut = 4656 + 1600 tail pad.
+    emitted = _feed_all(endpointer, [FRAME] * 30)
+    # Fires on the 28th feed: buffer 8960 samples, tail 3960 ≥ 640 + 3200,
+    # cut = 5000 + 1600 tail pad.
     assert len(emitted) == 1
-    assert emitted[0].duration_ms == 6_256 // 16
-    assert len(emitted[0].pcm16le) == 6_256 * 2
+    assert emitted[0].duration_ms == 6_600 // 16
+    assert len(emitted[0].pcm16le) == 6_600 * 2
 
 
 def test_second_utterance_endpoints_after_reset():
     async def handler(request):
-        samples = _posted_samples(request)
-        segments = [] if samples < 6_500 else [{"start_sample": 500, "end_sample": samples - 2_000}]
-        return httpx.Response(200, json={"segments": segments})
+        return httpx.Response(200, json={"segments": [
+            {"start_sample": 1_000, "end_sample": 5_000},
+        ]})
 
     endpointer = _endpointer(handler, trailing_silence_frames=2, min_speech_ms=250)
     emitted = _feed_all(endpointer, [FRAME] * 70)
@@ -166,7 +169,7 @@ def test_silence_only_buffer_stays_bounded():
 def test_short_blips_are_discarded_as_noise():
     async def handler(request):
         samples = _posted_samples(request)
-        segments = [] if samples < 2_000 else [{"start_sample": 100, "end_sample": 1_100}]
+        segments = [] if samples < 2_000 else [{"start_sample": 1_000, "end_sample": 2_000}]
         return httpx.Response(200, json={"segments": segments})
 
     endpointer = _endpointer(handler, trailing_silence_frames=2, min_speech_ms=250)

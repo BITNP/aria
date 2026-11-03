@@ -27,10 +27,13 @@ Silero VAD（模型 id `silero-vad`，task=vad）。其 HTTP 暴露面实测结�
 
 - 端点检测实现为**轮询式模型分段**（`src/voice_input/silero_vad.py`）：语音缓冲每
   `VOICE_IN_VAD_POLL_MS`（默认 300 ms）把**当前全部缓冲**送一次 `/v1/tasks/run` 重新
-  分段（补零到 512 样本整窗），不再依赖逐帧能量判定。句尾判定：缓冲尾音超过最后分段
-  末尾达到尾静音时长（复用 `VOICE_IN_VAD_TRAILING_SILENCE_FRAMES`）即出端点；缓冲触
-  顶 `VOICE_IN_VAD_MAX_FRAMES` 强制出端点。已沉降的起始静音随分段结果裁剪，检测不到
-  语音时缓冲只保留 0.5 s 预滚窗，不随 silence 无限增长。
+  分段（补零到 512 样本整窗，请求 `options.min_speech_duration_ms=100`），不再依赖
+  逐帧能量判定。句尾判定：缓冲尾音超过最后分段末尾达到尾静音时长
+  （复用 `VOICE_IN_VAD_TRAILING_SILENCE_FRAMES`）**加盲区余量 0.2 s** 即出端点；盲区
+  余量是实测教训：模型对新起说存在 `min_speech_duration_ms` 可见性延迟，若尾静音阈值
+  不大于该延迟，句中 ~0.23 s 的停顿会被误判为句尾（实测把一句话截在 2.47 s）。缓冲
+  触顶 `VOICE_IN_VAD_MAX_FRAMES` 强制出端点。已沉降的起始静音随分段结果裁剪，检测不
+  到语音时缓冲只保留 0.5 s 预滚窗，不随 silence 无限增长。
 - 端点音频 = 首分段起点前 0.1 s 至末分段终点后 0.1 s；短于 `VOICE_IN_VAD_MIN_SPEECH_MS`
   （默认 250 ms）的分段视为噪声丢弃。每个端点仍是一个 waycast input 帧（ADR-0011 不
   变），每端点仍只做一次说话人嵌入（ADR-0002 不变）。
@@ -47,7 +50,8 @@ Silero VAD（模型 id `silero-vad`，task=vad）。其 HTTP 暴露面实测结�
 
 ## Consequences
 
-- 低音量语音不再被截断；端点判定延迟增加至约「尾静音 + 轮询间隔」（0.4 s + 0.3 s 默认）。
+- 低音量语音不再被截断；端点判定延迟增加至约「尾静音 + 盲区余量 + 轮询间隔」
+  （0.4 s + 0.2 s + 0.3 s 默认）。
 - 轮询请求体随语音长度线性增长（30 s ≈ 1 MB WAV），本机回环上开销可忽略（模型分段
   本身毫秒级）。
 - 每 poll 一次全量分段意味着分段结果可能被后续 poll 修正（起点更准），端点音频以最新

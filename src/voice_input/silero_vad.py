@@ -35,6 +35,8 @@ from voice_input.vad import (
 LOGGER = logging.getLogger(__name__)
 
 WINDOW_SAMPLES: Final = 512  # the streaming model's fixed chunk (32 ms @ 16 kHz)
+SERVER_MIN_SPEECH_MS: Final = 100  # ask audio.cpp for finer-grained segments
+BLIND_WINDOW_SAMPLES: Final = 3_200  # onset invisible to polls (server min-speech + pad + margin)
 MAX_POLL_FAILURES: Final = 3
 KEEP_SILENCE_SAMPLES: Final = 8_000  # bounded silence kept while nothing is detected
 LEAD_PAD_SAMPLES: Final = 1_600  # audio kept before the first detected segment
@@ -70,7 +72,10 @@ class SileroVadClient:
             self._url,
             json={
                 "model": self._model,
-                "request": {"audio_base64": base64.b64encode(wav_bytes(padded)).decode()},
+                "request": {
+                    "audio_base64": base64.b64encode(wav_bytes(padded)).decode(),
+                    "options": {"min_speech_duration_ms": SERVER_MIN_SPEECH_MS},
+                },
             },
         )
         response.raise_for_status()
@@ -108,9 +113,11 @@ class SileroEndpointer:
 
     Every pushed frame grows the utterance buffer; the buffer is re-segmented
     at most once per ``poll_s``. An endpoint is emitted when the buffer tail
-    past the last segment end reaches ``trailing_silence_frames`` of audio (or
-    the ``max_frames`` cap is reached); emitted audio spans the detected
-    segments plus the lead/tail pads.
+    past the last segment end reaches ``trailing_silence_frames`` of audio
+    plus a blind-window margin (or the ``max_frames`` cap is reached); the
+    margin covers the server's ``min_speech_duration_ms`` lag so a resuming
+    utterance is visible before the turn can be cut. Emitted audio spans the
+    detected segments plus the lead/tail pads.
     """
 
     def __init__(
@@ -174,7 +181,9 @@ class SileroEndpointer:
         last_end -= trimmed
         end_samples -= trimmed
         tail_silence = end_samples - last_end
-        if tail_silence < self._trailing_samples and end_samples < self._max_samples:
+        if tail_silence < self._trailing_samples + BLIND_WINDOW_SAMPLES and (
+            end_samples < self._max_samples
+        ):
             return None  # utterance still in progress
         if last_end - first_start < self._min_speech_samples:
             # Too short to be an utterance: drop it and keep listening.
