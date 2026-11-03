@@ -73,6 +73,8 @@ VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 | VOICE_IN_ASR_LIVE_TIMEOUT_MS | 端点后等待流式最终文本的毫秒数（默认 10000；超时按失败回退批量） |
 | VOICE_IN_ASR_LIVE_MAX_FAILURES | 连续失败多少次后永久关闭流式路径（默认 3） |
 | VOICE_IN_DENOISE | GTCRN 降噪开关（默认开；设 `0` 关闭，直接用原始麦克风音频，ADR-0006） |
+| VOICE_IN_LOG_LEVEL | 本模块日志级别（默认 `INFO`；设 `DEBUG` 输出端点、ASR 转写结果、请求等调试信息） |
+| VOICE_IN_DEPS_LOG_LEVEL | 第三方依赖日志级别（默认 `WARNING`，屏蔽 websockets/httpx/asyncio/onnxruntime 噪音） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
 
 ## 降噪（GTCRN，ADR-0006）

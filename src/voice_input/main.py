@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import time
 from typing import Any, cast
 
 from dotenv import load_dotenv
@@ -50,6 +52,32 @@ LOGGER = logging.getLogger(__name__)
 ENDPOINT_QUEUE_SIZE = 4
 MAX_TEXT_LENGTH = 8192
 HUB_RECONNECT_DELAY_SECONDS = 3.0
+
+LOG_LEVEL_KEY = "VOICE_IN_LOG_LEVEL"
+DEPS_LOG_LEVEL_KEY = "VOICE_IN_DEPS_LOG_LEVEL"
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+# 第三方噪音源（WS 帧、HTTP 请求、事件循环、ONNX 运行时）默认钉在 WARNING，
+# 本模块自己的调试日志（端点/转写结果等 DEBUG）不受影响；需排查依赖时
+# 用 VOICE_IN_DEPS_LOG_LEVEL 单独放开。
+_THIRD_PARTY_LOGGERS = (
+    "websockets",
+    "websockets.client",
+    "websockets.server",
+    "httpx",
+    "httpcore",
+    "asyncio",
+    "onnxruntime",
+)
+
+
+def configure_logging() -> None:
+    """本模块日志级别走 VOICE_IN_LOG_LEVEL（默认 INFO），依赖库走
+    VOICE_IN_DEPS_LOG_LEVEL（默认 WARNING）。"""
+    level = os.environ.get(LOG_LEVEL_KEY, "INFO").strip().upper() or "INFO"
+    deps_level = os.environ.get(DEPS_LOG_LEVEL_KEY, "WARNING").strip().upper() or "WARNING"
+    logging.basicConfig(level=level, format=_LOG_FORMAT)
+    for name in _THIRD_PARTY_LOGGERS:
+        logging.getLogger(name).setLevel(deps_level)
 
 
 async def _send_one(
@@ -96,8 +124,10 @@ async def _recognize_and_send(
     """
     while True:
         pcm, speech_ms, stream = await queue.get()
+        started_at = time.monotonic()
         try:
             text: str | None = None
+            via = "live"
             if stream is not None and live is not None:
                 text = await live.finish(stream)
                 if text is not None:
@@ -109,12 +139,26 @@ async def _recognize_and_send(
             elif stream is not None:
                 await stream.abort()  # 无跟踪器持有：不留悬空连接，直接走批量
             if text is None:
+                via = "batch"
                 result = await asr.transcribe(pcm)
                 text = result.text
             text = text.strip()
+            elapsed = time.monotonic() - started_at
             if not text:
-                LOGGER.debug("empty transcript; dropping utterance")
+                LOGGER.debug(
+                    "empty transcript via %s (%.2fs, %d ms audio); dropping utterance",
+                    via,
+                    elapsed,
+                    speech_ms,
+                )
                 continue
+            LOGGER.debug(
+                "asr transcript via %s (%.2fs, %d ms audio): %r",
+                via,
+                elapsed,
+                speech_ms,
+                text,
+            )
             if len(text) > MAX_TEXT_LENGTH:
                 LOGGER.warning("transcript too long (%d chars); dropping", len(text))
                 continue
@@ -185,6 +229,13 @@ async def _collect(
                     await live.update(frame, vad, endpoint_fired=segment is not None)
                 if segment is not None:
                     stream = live.take() if live is not None else None
+                    LOGGER.debug(
+                        "endpoint fired: %d ms audio, live_session=%s, queue_depth=%d/%d",
+                        segment.duration_ms,
+                        stream is not None,
+                        queue.qsize(),
+                        queue.maxsize,
+                    )
                     try:
                         queue.put_nowait((segment.pcm16le, segment.duration_ms, stream))
                     except asyncio.QueueFull:
@@ -289,7 +340,7 @@ def main() -> None:
     )
     parser.parse_args()
     load_dotenv()
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     try:
         asyncio.run(run())
     except KeyboardInterrupt:

@@ -11,6 +11,7 @@ empty result is worth forwarding (it never is).
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from typing import cast
@@ -18,6 +19,8 @@ from typing import cast
 import httpx
 
 from voice_input.vad import wav_bytes as _wav_bytes
+
+LOGGER = logging.getLogger(__name__)
 
 MAX_RESPONSE_BYTES = 65_536
 
@@ -53,6 +56,9 @@ class OpenAICompatibleAsr:
     async def transcribe(self, pcm16le: bytes) -> Recognition:
         """Transcribe one utterance, returning an empty Recognition on any failure."""
         wav = _wav_bytes(pcm16le)
+        LOGGER.debug(
+            "batch asr request: %d bytes audio -> %s model=%s", len(pcm16le), self._url, self._model
+        )
         headers: dict[str, str] = {}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
@@ -69,12 +75,15 @@ class OpenAICompatibleAsr:
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_RESPONSE_BYTES:
+                        LOGGER.warning("batch asr response exceeds %d bytes", MAX_RESPONSE_BYTES)
                         return Recognition("")
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError) as exc:
+            LOGGER.warning("batch asr request failed: %s", exc)
             return Recognition("")
         try:
             value = json.loads(bytes(body))
-        except (json.JSONDecodeError, UnicodeError, ValueError):
+        except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
+            LOGGER.warning("batch asr response is not JSON: %s", exc)
             return Recognition("")
         return _parse_recognition(value)
 
