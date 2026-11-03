@@ -2,15 +2,24 @@
 
 The audio.cpp server exposes its streaming ``silero_vad`` model through the
 generic task route (``POST /v1/tasks/run`` with a base64 WAV and the model id);
-the response carries absolute speech segments as sample indices at 16 kHz.
-The streaming model consumes fixed 512-sample windows, so the WAV payload is
-zero-padded to a whole number of windows before posting (ADR-0003).
+each request replays the WAV as fixed 512-sample windows on a freshly reset
+stream and returns absolute speech segments as sample indices at 16 kHz, so
+the payload is zero-padded to a whole number of windows before posting
+(ADR-0003, ADR-0004).
 
-Endpointing polls the model on the growing utterance buffer: every
-``poll_s`` the buffer is re-segmented and an endpoint fires once the audio
-after the last segment end reaches the configured trailing silence (or the
-hard max-length cap is hit).  Leading silence is trimmed as it settles and
-too-short segments are discarded as noise.
+Server semantics verified from audio.cpp source (ADR-0004): the streaming
+session decodes with fixed defaults (threshold 0.5 / neg-threshold 0.35,
+min speech 250 ms, min silence 100 ms, speech pad 30 ms); per-request
+``options`` are parsed but never consumed on the streaming path, so nothing
+here tries to tune them.  Segments split at pauses >= 100 ms; a segment still
+open at the buffer end only appears once it exceeds the 250 ms min-speech
+gate, which is the visibility lag a resuming utterance is invisible through.
+
+Endpointing polls the model on the growing utterance buffer: every ``poll_s``
+the buffer is re-segmented and an endpoint fires once the audio after the last
+segment end reaches the configured trailing silence plus a blind-window margin
+covering that visibility lag (or the hard max-length cap is hit).  Leading
+silence is trimmed as it settles and too-short spans are discarded as noise.
 
 If the service keeps failing, the endpointer degrades permanently to the
 bundled energy detector so the pipeline survives an audio.cpp outage.
@@ -35,8 +44,10 @@ from voice_input.vad import (
 LOGGER = logging.getLogger(__name__)
 
 WINDOW_SAMPLES: Final = 512  # the streaming model's fixed chunk (32 ms @ 16 kHz)
-SERVER_MIN_SPEECH_MS: Final = 100  # ask audio.cpp for finer-grained segments
-BLIND_WINDOW_SAMPLES: Final = 3_200  # onset invisible to polls (server min-speech + pad + margin)
+# A resuming utterance stays invisible to polls until its open segment passes
+# the server's fixed 250 ms min-speech gate: 4000 samples minus the 30 ms
+# speech pad, plus 512-sample onset quantization, plus margin (ADR-0004).
+BLIND_WINDOW_SAMPLES: Final = 4_160
 MAX_POLL_FAILURES: Final = 3
 KEEP_SILENCE_SAMPLES: Final = 8_000  # bounded silence kept while nothing is detected
 LEAD_PAD_SAMPLES: Final = 1_600  # audio kept before the first detected segment
@@ -72,10 +83,7 @@ class SileroVadClient:
             self._url,
             json={
                 "model": self._model,
-                "request": {
-                    "audio_base64": base64.b64encode(wav_bytes(padded)).decode(),
-                    "options": {"min_speech_duration_ms": SERVER_MIN_SPEECH_MS},
-                },
+                "request": {"audio_base64": base64.b64encode(wav_bytes(padded)).decode()},
             },
         )
         response.raise_for_status()

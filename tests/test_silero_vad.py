@@ -74,7 +74,7 @@ def test_client_posts_task_run_with_512_aligned_wav():
         seen["path"] = request.url.path
         body = json.loads(request.content)
         seen["model"] = body["model"]
-        seen["options"] = body["request"].get("options")
+        seen["request_keys"] = sorted(body["request"])
         seen["samples"] = _posted_samples(request)
         return httpx.Response(200, json={"segments": [{"start_sample": 512, "end_sample": 1024}]})
 
@@ -89,7 +89,9 @@ def test_client_posts_task_run_with_512_aligned_wav():
     assert segments == [(512, 1024)]
     assert seen["path"] == "/v1/tasks/run"
     assert seen["model"] == "silero-vad"
-    assert seen["options"] == {"min_speech_duration_ms": 100}
+    # Streaming sessions bake their VAD config at model load and ignore
+    # per-request options (ADR-0004): sending any would be a silent no-op.
+    assert seen["request_keys"] == ["audio_base64"]
     assert seen["samples"] == 512  # zero-padded to a whole streaming window
 
 
@@ -138,8 +140,8 @@ def test_endpoint_fires_after_trailing_silence_past_last_segment():
         ]})
 
     endpointer = _endpointer(handler, trailing_silence_frames=2, min_speech_ms=250)
-    emitted = _feed_all(endpointer, [FRAME] * 30)
-    # Fires on the 28th feed: buffer 8960 samples, tail 3960 ≥ 640 + 3200,
+    emitted = _feed_all(endpointer, [FRAME] * 32)
+    # Fires on the 31st feed: buffer 9920 samples, tail 4920 ≥ 640 + 4160,
     # cut = 5000 + 1600 tail pad.
     assert len(emitted) == 1
     assert emitted[0].duration_ms == 6_600 // 16
