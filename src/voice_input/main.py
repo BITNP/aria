@@ -59,12 +59,15 @@ _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 # 第三方噪音源（WS 帧、HTTP 请求、事件循环、ONNX 运行时）默认钉在 WARNING，
 # 本模块自己的调试日志（端点/转写结果等 DEBUG）不受影响；需排查依赖时
 # 用 VOICE_IN_DEPS_LOG_LEVEL 单独放开。
+# httpx2/httpcore2 是 openai SDK 内置 vendored 客户端的日志器名。
 _THIRD_PARTY_LOGGERS = (
     "websockets",
     "websockets.client",
     "websockets.server",
     "httpx",
+    "httpx2",
     "httpcore",
+    "httpcore2",
     "asyncio",
     "onnxruntime",
 )

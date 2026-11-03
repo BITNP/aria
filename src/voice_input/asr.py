@@ -78,7 +78,7 @@ class OpenAICompatibleAsr:
                         LOGGER.warning("batch asr response exceeds %d bytes", MAX_RESPONSE_BYTES)
                         return Recognition("")
         except (httpx.HTTPError, OSError) as exc:
-            LOGGER.warning("batch asr request failed: %s", exc)
+            LOGGER.warning("batch asr request failed: %s: %s", type(exc).__name__, exc)
             return Recognition("")
         try:
             value = json.loads(bytes(body))
