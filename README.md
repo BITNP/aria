@@ -6,7 +6,11 @@
 
 - **采集**：持续从默认或指定麦克风采集 16 kHz 单声道 PCM16 音频块。
 - **端点检测（VAD）**：识别一段语音的起止（静音分段），把一段语音聚合成一个端点。
-- **ASR**：调用 OpenAI 兼容的语音识别服务，把端点音频转成文本。
+- **ASR**：调用 OpenAI 兼容的语音识别服务，把端点音频转成文本。默认走**真流式
+  live 路径**（`POST /v1/audio/transcriptions/live`）：语音在途时边采集边上传，
+  服务端边解码边回 SSE 增量文本，端点产生后再等最终结果（实测端点后约 40ms 出
+  文本，而不是端点后才开始整段上传识别）；流式会话失败、超时或模型不支持时
+  自动回退批量转写（ADR-0005）。
 - **说话人识别**：对每个端点做一次 CAM++ 声纹嵌入与内存态 1:N 动态匹配（ADR-0002）；命中的话在 content 前加 `【说话人spk_N】` 前缀，`stable_prefix` 保持纯 ASR 文本。
 - **发送输入帧**：识别结果作为 waycast input 帧发送给 hub，content 为识别文本（命中说话人时带前缀），metadata 携带来源与端点信息。
 - 模块**不参与话权与打断判断**（ADR-0011）：任何抵达 hub 的 input 帧都触发一次 Invocation；模块自身在静音分段处决定何时发送，但不标记 partial/final，也不做"这是部分还是最终"的判断。
@@ -56,6 +60,9 @@ VOICE_IN_VAD_URL=http://127.0.0.1:8080
 | VOICE_IN_VAD_TRAILING_SILENCE_FRAMES | 判定一句结束所需的连续静音帧数（默认 20） |
 | VOICE_IN_VAD_MAX_FRAMES | 单段语音最大帧数（默认 1500） |
 | VOICE_IN_VAD_PRE_ROLL_FRAMES | 语音起始前保留的前摇帧数（默认 5；能量 VAD 与降级路径使用） |
+| VOICE_IN_ASR_LIVE | 真流式 ASR 路径开关（默认开；设 `0` 关闭，全部走批量转写） |
+| VOICE_IN_ASR_LIVE_TIMEOUT_MS | 端点后等待流式最终文本的毫秒数（默认 10000；超时按失败回退批量） |
+| VOICE_IN_ASR_LIVE_MAX_FAILURES | 连续失败多少次后永久关闭流式路径（默认 3） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
 
 ## 端点检测（VAD）
@@ -76,6 +83,32 @@ VOICE_IN_VAD_URL=http://127.0.0.1:8080
 
 两种路径共用 `VOICE_IN_VAD_TRAILING_SILENCE_FRAMES`（句尾静音）与
 `VOICE_IN_VAD_MAX_FRAMES`（单句上限）语义；每个端点仍是一个 waycast input 帧。
+
+## ASR：真流式 live 路径与批量回退（ADR-0005）
+
+批量路由（`POST /v1/audio/transcriptions`）必须等一句话说完、整段 WAV 上传后才
+开始解码；live 路由（`POST /v1/audio/transcriptions/live`）允许在同一条连接上边
+上传裸 PCM 边收 SSE 增量文本（`transcript.text.delta`），最终文本
+（`transcript.text.done`）在客户端发出终止块（0 长度 chunk）后到达——实测
+nemotron-3.5-asr-streaming 在终止块后约 40ms 出结果，即**出文本的时刻由端点检测
+决定，而不是由识别耗时决定**。
+
+- **会话生命周期**（`live_asr.LiveAsrTracker`，跑在采集泵里）：VAD 报告语音区间
+  打开时开启一条会话，把端点缓冲里已有的语音（含前摇，与批量 PCM 同源）回填进
+  去，此后每帧增量喂入；端点产生时把会话摘下交给识别 worker，worker 发终止块并
+  等最终文本；VAD 把语音当噪声丢弃时直接断开连接（服务端随之释放模型占用）。
+- **回退**：会话失败、`VOICE_IN_ASR_LIVE_TIMEOUT_MS` 内没等到最终文本、或服务端
+  拒绝流式模型时，worker 用同一份端点 PCM 走批量转写，行为与关闭流式完全一致；
+  回退前先关闭 live 连接并留 150ms 让服务端释放模型锁，批量请求不会撞
+  「model is busy」。「模型被占用」属并发瞬时状态，只降级当次、不计失败；连续
+  `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败后本路径**永久关闭**（日志 warning），
+  重启模块才会重新启用。
+- **实现约束**：httpx 无法在同一条 HTTP/1.1 连接上边发边收（发完请求体才开始读
+  响应），live 客户端是裸 asyncio 的 chunked 上传 + 增量 SSE 解析；喂音频只入
+  缓冲、由独立写任务刷出，网络背压不会卡住采集泵。live 路由语义以 audio.cpp
+  `app/server/api.md` 的 live 一节与 `runtime.cpp` 为准：参数全在查询串、请求体
+  是裸 PCM、不发终止块直接断连是错误而非说完、请求存续期间服务端一直持有模型
+  占用。
 
 ## 启动
 

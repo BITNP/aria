@@ -7,6 +7,9 @@ transcribes microphone audio with an OpenAI-compatible ASR service
 
 Endpoint detection uses the energy VAD unless VOICE_IN_VAD_URL points at an
 audio.cpp server whose silero_vad model then drives endpointing (ADR-0003).
+Transcription prefers the streaming live route on the same ASR server and falls
+back to the batch route per utterance on failure (ADR-0005); VOICE_IN_ASR_LIVE=0
+disables the live path outright.
 """
 from __future__ import annotations
 
@@ -30,6 +33,9 @@ VAD_URL_KEY: Final = "VOICE_IN_VAD_URL"
 VAD_MODEL_KEY: Final = "VOICE_IN_VAD_MODEL"
 VAD_POLL_MS_KEY: Final = "VOICE_IN_VAD_POLL_MS"
 VAD_MIN_SPEECH_MS_KEY: Final = "VOICE_IN_VAD_MIN_SPEECH_MS"
+ASR_LIVE_KEY: Final = "VOICE_IN_ASR_LIVE"
+ASR_LIVE_TIMEOUT_MS_KEY: Final = "VOICE_IN_ASR_LIVE_TIMEOUT_MS"
+ASR_LIVE_MAX_FAILURES_KEY: Final = "VOICE_IN_ASR_LIVE_MAX_FAILURES"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
@@ -38,6 +44,10 @@ DEFAULT_PRE_ROLL_FRAMES: Final = 5
 DEFAULT_VAD_MODEL: Final = "silero-vad"
 DEFAULT_VAD_POLL_MS: Final = 300
 DEFAULT_VAD_MIN_SPEECH_MS: Final = 250
+DEFAULT_ASR_LIVE_TIMEOUT_MS: Final = 10_000
+DEFAULT_ASR_LIVE_MAX_FAILURES: Final = 3
+
+_TRUE_VALUES: Final = {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +67,9 @@ class Settings:
     vad_model: str = DEFAULT_VAD_MODEL
     vad_poll_ms: int = DEFAULT_VAD_POLL_MS
     vad_min_speech_ms: int = DEFAULT_VAD_MIN_SPEECH_MS
+    asr_live: bool = True
+    asr_live_timeout_ms: int = DEFAULT_ASR_LIVE_TIMEOUT_MS
+    asr_live_max_failures: int = DEFAULT_ASR_LIVE_MAX_FAILURES
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +114,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         vad_min_speech_ms=_parse_int(
             source, VAD_MIN_SPEECH_MS_KEY, DEFAULT_VAD_MIN_SPEECH_MS, minimum=1
         ),
+        asr_live=_parse_bool(source, ASR_LIVE_KEY, default=True),
+        asr_live_timeout_ms=_parse_int(
+            source, ASR_LIVE_TIMEOUT_MS_KEY, DEFAULT_ASR_LIVE_TIMEOUT_MS, minimum=100
+        ),
+        asr_live_max_failures=_parse_int(
+            source, ASR_LIVE_MAX_FAILURES_KEY, DEFAULT_ASR_LIVE_MAX_FAILURES, minimum=1
+        ),
     )
+
+
+def _parse_bool(source: Mapping[str, str], key: str, *, default: bool) -> bool:
+    raw = source.get(key, "").strip()
+    if raw == "":
+        return default
+    return raw.lower() in _TRUE_VALUES
 
 
 def _optional_url(value: str | None) -> str | None:

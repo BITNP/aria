@@ -8,6 +8,14 @@
 - **端点 / endpoint**：VAD 把一段连续语音（含尾随静音与前摇）聚合成的一个完备音频段；一个端点对应一条 input 帧。
 - **stable_prefix**：input 帧 metadata 中保持纯 ASR 文本的字段，说话人前缀只进 content，不改写该字段（ADR-0002）。
 
+## ASR（ADR-0005）
+
+- **流式路径 / live 路径**：语音在途时经 audio.cpp live 路由（`/v1/audio/transcriptions/live`）边上传裸 PCM 边收 SSE 增量文本的识别方式，为默认主路径。
+- **流式会话 / live session**：一条语音区间对应一条 live 连接：区间打开时开启并回填语音起点音频，端点产生时交给识别 worker 收尾（发终止块等最终文本或断开）。
+- **终止块 / terminating chunk**：chunked 编码里的 0 长度块，向服务端声明「说完了」；不发终止块直接断连在服务端语义里是错误而非语音结束。
+- **批量转写 / batch 回退**：端点音频整段上传的 `POST /v1/audio/transcriptions` 路径；流式失败、超时或服务端拒绝流式时按端点回退到它，`VOICE_IN_ASR_LIVE=0` 时作为唯一路径。
+- **流式路径永久关闭 / live path disabled**：连续 `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败（或收到不支持信号）后本进程不再尝试流式，全部走批量；重启恢复。
+
 ## 说话人识别（ADR-0002）
 
 - **说话人 ID / speaker ID**：进程内唯一的说话人编号，形如 `spk_1`、`spk_2`（`spk_N` 单调递增）；身份以 `【说话人spk_N】` 前缀随 content 进入 Agent。

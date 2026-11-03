@@ -29,13 +29,19 @@ from voice_input.asr import OpenAICompatibleAsr
 from voice_input.capture import PortAudioMic
 from voice_input.config import load_settings
 from voice_input.hub_client import MODULE_NAME, HubConnectionError, InputClient
+from voice_input.live_asr import LiveAsrTracker, LiveTranscriptStream, live_url_for
 from voice_input.silero_vad import SileroEndpointer, SileroVadClient
 from voice_input.speaker import (
     SpeakerIdentifier,
     build_speaker_identifier,
     disabled_status,
 )
-from voice_input.vad import EndpointDetector, Endpointer, EnergyEndpointer
+from voice_input.vad import (
+    SAMPLE_RATE_HZ,
+    EndpointDetector,
+    Endpointer,
+    EnergyEndpointer,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,14 +81,35 @@ async def _recognize_and_send(
     ws: InputClient,
     asr: OpenAICompatibleAsr,
     speaker: SpeakerIdentifier | None,
-    queue: asyncio.Queue[tuple[bytes, int]],
+    queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"],
+    live: LiveAsrTracker | None,
 ) -> None:
-    """Consume endpoints from the queue: transcribe and forward one input frame per utterance."""
+    """Consume endpoints from the queue: transcribe and forward one input frame per utterance.
+
+    A queued item carries the live streaming session when one was open (the
+    normal case with live ASR enabled): its final text usually lands tens of ms
+    after the endpoint, long before a batch upload of the same audio could
+    start.  If the session failed or timed out, finish() has already closed the
+    connection (freeing the server-side model lock) and we fall back to batch.
+    """
     while True:
-        pcm, speech_ms = await queue.get()
+        pcm, speech_ms, stream = await queue.get()
         try:
-            result = await asr.transcribe(pcm)
-            text = result.text.strip()
+            text: str | None = None
+            if stream is not None and live is not None:
+                text = await live.finish(stream)
+                if text is not None:
+                    text = text.strip() or None
+                    if text is None:
+                        LOGGER.debug("live asr returned empty text; falling back to batch")
+                else:
+                    await live.discard(stream)  # 兜底：finish 已保证关闭，这里幂等
+            elif stream is not None:
+                await stream.abort()  # 无跟踪器持有：不留悬空连接，直接走批量
+            if text is None:
+                result = await asr.transcribe(pcm)
+                text = result.text
+            text = text.strip()
             if not text:
                 LOGGER.debug("empty transcript; dropping utterance")
                 continue
@@ -126,9 +153,16 @@ async def _collect(
     mic: PortAudioMic,
     enhancer: Any | None,
     vad: Endpointer,
-    queue: asyncio.Queue[tuple[bytes, int]],
+    queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"],
+    live: LiveAsrTracker | None = None,
 ) -> None:
-    """Read mic blocks, run endpoint detection, and push complete utterances to the queue."""
+    """Read mic blocks, run endpoint detection, and push complete utterances to the queue.
+
+    With a live ASR tracker, every frame also feeds the per-utterance streaming
+    session (started when the VAD opens an utterance); the endpoint's queue item
+    carries that session so the worker can collect the transcript that has been
+    streaming all along.
+    """
     timestamp = 0
     await mic.open()
     try:
@@ -140,11 +174,16 @@ async def _collect(
             for frame in frames:
                 segment = await vad.feed(frame, timestamp)
                 timestamp = (timestamp + 320) % (1 << 32)
+                if live is not None:
+                    await live.update(frame, vad, endpoint_fired=segment is not None)
                 if segment is not None:
+                    stream = live.take() if live is not None else None
                     try:
-                        queue.put_nowait((segment.pcm16le, segment.duration_ms))
+                        queue.put_nowait((segment.pcm16le, segment.duration_ms, stream))
                     except asyncio.QueueFull:
                         LOGGER.error("endpoint queue full; dropping utterance")
+                        if live is not None:
+                            await live.discard(stream)
     finally:
         await mic.aclose()
 
@@ -168,17 +207,41 @@ async def _run_with_hub(settings: Any) -> None:
             settings.asr_model,
             settings.asr_api_key,
         )
-        queue: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=ENDPOINT_QUEUE_SIZE)
+        queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"] = (
+            asyncio.Queue(maxsize=ENDPOINT_QUEUE_SIZE)
+        )
         mic = PortAudioMic(device=settings.device)
         vad = build_endpointer(settings)
+        live = build_live_asr(settings)
         enhancer = None  # optional zipenhancer wiring lands here (module-internal)
         try:
             async with asyncio.TaskGroup() as tasks:
-                tasks.create_task(_collect(mic, enhancer, vad, queue))
-                tasks.create_task(_recognize_and_send(ws, asr, speaker, queue))
+                tasks.create_task(_collect(mic, enhancer, vad, queue, live))
+                tasks.create_task(_recognize_and_send(ws, asr, speaker, queue, live))
         finally:
+            if live is not None:
+                await live.aclose()
             await asr.aclose()
             await vad.aclose()
+
+
+def build_live_asr(settings: Any) -> LiveAsrTracker | None:
+    """Streaming ASR tracker when enabled; None keeps the pipeline batch-only.
+
+    The live route URL is derived from the batch ASR endpoint (same server,
+    /audio/transcriptions/live).  Disabling is automatic on repeated failure or
+    on a server that rejects the model for streaming (live_asr.LiveAsrTracker).
+    """
+    if not settings.asr_live:
+        return None
+    LOGGER.info("live ASR enabled: %s model=%s", live_url_for(settings.asr_endpoint), settings.asr_model)
+    return LiveAsrTracker(
+        url=live_url_for(settings.asr_endpoint),
+        model=settings.asr_model,
+        sample_rate=SAMPLE_RATE_HZ,
+        finish_timeout=settings.asr_live_timeout_ms / 1000,
+        max_failures=settings.asr_live_max_failures,
+    )
 
 
 RECONNECTABLE_ERRORS: tuple[type[BaseException], ...] = (HubConnectionError, ConnectionError, OSError)

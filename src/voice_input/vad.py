@@ -43,9 +43,23 @@ class Endpointer(Protocol):
 
     ``feed`` takes one 20 ms frame plus its sample timestamp and returns the
     completed utterance when a turn ends, else None.
+
+    ``utterance_open`` / ``utterance_audio`` expose the in-progress utterance so
+    the live ASR path (live_asr) can keep a streaming session in lockstep with
+    exactly the audio endpointing will emit: the flag tracks "utterance audio is
+    being collected", and the snapshot is the utterance buffered so far.
     """
 
     async def feed(self, frame: bytes, sample: int) -> SpeechSegment | None: ...
+
+    @property
+    def utterance_open(self) -> bool:
+        """True while a started utterance's audio is being collected."""
+        ...
+
+    def utterance_audio(self) -> bytes:
+        """Snapshot of the open utterance's buffered audio (empty when none)."""
+        ...
 
     async def aclose(self) -> None: ...
 
@@ -122,6 +136,15 @@ class EndpointDetector:
         self._start_sample = None
         self._silence = 0
 
+    @property
+    def collecting(self) -> bool:
+        """True while an utterance (started, not yet flushed) is being collected."""
+        return self._start_sample is not None
+
+    def utterance_audio(self) -> bytes:
+        """Snapshot of the collected utterance frames (incl. preroll), else empty."""
+        return b"".join(self._frames) if self._start_sample is not None else b""
+
 
 def _mean_energy(frame: bytes) -> int:
     samples = memoryview(frame).cast("h")
@@ -149,6 +172,13 @@ class EnergyEndpointer:
             return None
         duration_ms, self._speech_ms = self._speech_ms, 0
         return SpeechSegment(pcm16le=endpoint.pcm16le, duration_ms=duration_ms)
+
+    @property
+    def utterance_open(self) -> bool:
+        return self._detector.collecting
+
+    def utterance_audio(self) -> bytes:
+        return self._detector.utterance_audio()
 
     async def aclose(self) -> None:
         return None

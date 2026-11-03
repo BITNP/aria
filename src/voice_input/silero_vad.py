@@ -149,6 +149,7 @@ class SileroEndpointer:
         self._last_poll = 0.0
         self._failures = 0
         self._degraded = False
+        self._open = False
 
     async def feed(self, frame: bytes, sample: int) -> SpeechSegment | None:
         if self._degraded:
@@ -174,13 +175,27 @@ class SileroEndpointer:
         self._failures = 0
         return self._evaluate(segments)
 
+    @property
+    def utterance_open(self) -> bool:
+        if self._degraded:
+            return self._fallback.utterance_open
+        return self._open
+
+    def utterance_audio(self) -> bytes:
+        if self._degraded:
+            return self._fallback.utterance_audio()
+        return bytes(self._buffer) if self._open else b""
+
     def _evaluate(self, segments: list[tuple[int, int]]) -> SpeechSegment | None:
         end_samples = len(self._buffer) // 2
         if not segments:
             # Nothing but silence (or undetected noise) so far: keep a bounded
             # pre-roll window so a late-detected onset still has lead-in audio.
+            # _open deliberately survives a transiently-empty poll: during the
+            # blind window (ADR-0004) a resuming utterance shows no segments.
             self._trim_front(end_samples - KEEP_SILENCE_SAMPLES)
             return None
+        self._open = True  # first detected speech starts the live-ASR window
         first_start = min(start for start, _ in segments)
         last_end = max(end for _, end in segments)
         trimmed = max(0, first_start - LEAD_PAD_SAMPLES)
@@ -196,6 +211,7 @@ class SileroEndpointer:
         if last_end - first_start < self._min_speech_samples:
             # Too short to be an utterance: drop it and keep listening.
             self._trim_front(last_end)
+            self._open = False
             return None
         cut = min(last_end + TAIL_PAD_SAMPLES, end_samples)
         segment = SpeechSegment(
@@ -209,6 +225,7 @@ class SileroEndpointer:
             end_samples,
         )
         self._trim_front(cut)
+        self._open = False
         return segment
 
     def _trim_front(self, samples: int) -> None:

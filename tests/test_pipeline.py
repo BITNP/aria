@@ -68,29 +68,69 @@ def test_embedder_fault_does_not_stop_pipeline():
 class _FakeAsr:
     def __init__(self, text: str) -> None:
         self._text = text
+        self.calls = 0
 
     async def transcribe(self, pcm: bytes) -> object:
         from voice_input.asr import Recognition
 
+        self.calls += 1
         return Recognition(self._text)
+
+
+class _StubStream:
+    """Test-only stand-in for a handed-off LiveTranscriptStream."""
+
+    def __init__(self, final: str | None) -> None:
+        self._final = final
+        self.aborted = False
+
+    async def finish(self, timeout: float) -> str:
+        from voice_input.live_asr import LiveAsrError
+
+        if self._final is None:
+            raise LiveAsrError("stub failure")
+        return self._final
+
+    async def abort(self) -> None:
+        self.aborted = True
+
+
+class _StubTracker:
+    def __init__(self, final: str | None) -> None:
+        self.stream = _StubStream(final)
+        self.discarded: list[_StubStream] = []
+
+    async def finish(self, stream: _StubStream) -> str | None:
+        try:
+            return await stream.finish(timeout=1.0)
+        except Exception:  # noqa: BLE001 - stub mirrors LiveAsrTracker.finish swallowing
+            return None
+
+    async def discard(self, stream: _StubStream | None) -> None:
+        if stream is not None:
+            self.discarded.append(stream)
+
+
+async def _drain(worker: "asyncio.Task[None]", queue: "asyncio.Queue[object]", ws: _RecorderWs) -> None:
+    for _ in range(100):
+        if queue.empty():
+            break
+        await asyncio.sleep(0.01)
+    worker.cancel()
+    try:
+        await worker
+    except asyncio.CancelledError:
+        pass
 
 
 def test_overlong_transcript_is_dropped_in_consumer():
     async def scenario():
-        queue: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=1)
-        queue.put_nowait((b"\x00" * 640, 600))
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait((b"\x00" * 640, 600, None))
         ws = _RecorderWs()
         asr = _FakeAsr("x" * (MAX_TEXT_LENGTH + 1))
-        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue))
-        for _ in range(100):
-            if queue.empty() or ws.sent:
-                break
-            await asyncio.sleep(0.01)
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
+        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue, None))
+        await _drain(worker, queue, ws)
         assert ws.sent == []
 
     asyncio.run(scenario())
@@ -98,21 +138,63 @@ def test_overlong_transcript_is_dropped_in_consumer():
 
 def test_empty_transcript_is_dropped():
     async def scenario():
-        queue: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=1)
-        queue.put_nowait((b"\x00" * 640, 600))
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait((b"\x00" * 640, 600, None))
         ws = _RecorderWs()
         asr = _FakeAsr("   ")
-        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue))
-        for _ in range(100):
-            if queue.empty() or ws.sent:
-                break
-            await asyncio.sleep(0.01)
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
+        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue, None))
+        await _drain(worker, queue, ws)
         assert ws.sent == []
+
+    asyncio.run(scenario())
+
+
+def test_live_session_result_bypasses_batch_asr():
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        tracker = _StubTracker("你好")
+        queue.put_nowait((b"\x00" * 640, 600, tracker.stream))
+        ws = _RecorderWs()
+        asr = _FakeAsr("不该被调用")
+        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue, tracker))
+        await _drain(worker, queue, ws)
+        return ws, asr
+
+    ws, asr = asyncio.run(scenario())
+    assert asr.calls == 0  # live 成功：批量 ASR 完全不参与
+    assert ws.sent[0][0] == "你好"
+
+
+def test_failed_live_session_falls_back_to_batch_asr():
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        tracker = _StubTracker(None)
+        queue.put_nowait((b"\x00" * 640, 600, tracker.stream))
+        ws = _RecorderWs()
+        asr = _FakeAsr("批量兜底")
+        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue, tracker))
+        await _drain(worker, queue, ws)
+        return ws, asr
+
+    ws, asr = asyncio.run(scenario())
+    assert asr.calls == 1
+    assert ws.sent[0][0] == "批量兜底"
+
+
+def test_stream_without_tracker_is_aborted_and_batch_used():
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        stream = _StubStream("不该被用")
+        queue.put_nowait((b"\x00" * 640, 600, stream))
+        ws = _RecorderWs()
+        asr = _FakeAsr("批量")
+        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue, None))
+        await _drain(worker, queue, ws)
+        return ws, stream
+
+    ws, stream = asyncio.run(scenario())
+    assert stream.aborted
+    assert ws.sent[0][0] == "批量"
 
 
 def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
