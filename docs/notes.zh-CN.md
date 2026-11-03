@@ -45,3 +45,29 @@
   测试容差 64 LSB；样本守恒 =（hops−1 预热）×256 下取整到 320 帧。
 - 验证：pytest 117 通过（2 个 opt-in 跳过），ruff check 通过，basedpyright
   strict 0 错误（typings/onnxruntime 桩补 get_modelmeta）。
+
+## 2026-11-03 端点检测改进程内 Silero VAD ONNX（ADR-0007，取代 0003/0004）
+
+- 动机（用户决策）：audio.cpp 的 Silero 封装逐请求 reset、全缓冲重放、句尾判定
+  ~0.96s，且 VAD 占用其 GPU 面；官方模型仅 2.3MB，进程内 CPU 足够。
+- 选型（在线核实）：snakers4/silero-vad master（MIT）；README 确认 ONNX 路径只需
+  onnxruntime+numpy（torch 仅为官方加载器依赖，不引入）。模型取官方默认导出
+  src/silero_vad/data/silero_vad.onnx（v5/opset16，2,327,524 字节，sha256
+  1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3；git blob
+  80c5592ef1f4c9ede3e357bbd02eb863358a6a9d 与 master 树对象一致，入库
+  src/voice_input/models/）。
+- 图签名实测：input [1,576]（64 context+512 chunk，宿主维护 context）、state
+  [2,1,128] 回接、sr int64 标量；输出概率 [1,1]+状态。动态维图 → 运行时形状守卫。
+  后处理按官方 utils_vad 流式化：滞回 0.5/0.35、min_silence 100ms、pad 30ms、
+  min_speech 沿用 250ms（严格大于）；官方纯 Python 后处理做 oracle 在官方
+  tests/data/test.wav 上验证复刻前端（19 段）。
+- 实现：silero_vad.py 原地重写（SileroVadModel + SileroEndpointer，
+  asyncio.to_thread）；VOICE_IN_VAD=silero|energy（默认 silero）、
+  VOICE_IN_VAD_THRESHOLD（默认 0.5）；删 SileroVadClient 与
+  VOICE_IN_VAD_URL/MODEL/POLL_MS 与盲区/轮询逻辑；加载失败落能量、连续 3 次推理
+  失败本连接永久降级；句尾判定 ~0.4s → ~0.13s。
+- 实测：端到端 RTF 0.011（模型本体 0.005；60s 官方语音，12 核 x86 单线程）；
+  19 端点/47.5s 语音；T1 脚本化概率模型 16 例锁滞回/切片/live 对齐/封顶/降级/
+  校验；opt-in VOICE_IN_SILERO_WAV 通过。
+- 验证：pytest 133 通过（3 opt-in 跳过）、ruff 通过、basedpyright strict 0 错误
+  （typings/onnxruntime 桩补 SessionOptions）。

@@ -36,6 +36,7 @@ include = [
     "src/voice_input/models/campp.onnx",
     "src/voice_input/models/campp.onnx.data",
     "src/voice_input/models/gtcrn_simple.onnx",
+    "src/voice_input/models/silero_vad.onnx",
 ]
 
 [tool.pytest.ini_options]

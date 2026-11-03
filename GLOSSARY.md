@@ -16,6 +16,23 @@
 - **批量转写 / batch 回退**：端点音频整段上传的 `POST /v1/audio/transcriptions` 路径；流式失败、超时或服务端拒绝流式时按端点回退到它，`VOICE_IN_ASR_LIVE=0` 时作为唯一路径。
 - **流式路径永久关闭 / live path disabled**：连续 `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败（或收到不支持信号）后本进程不再尝试流式，全部走批量；重启恢复。
 
+## 端点检测（VAD，ADR-0007）
+
+- **进程内 Silero VAD / in-process Silero VAD**：随包 `silero_vad.onnx`（官方 v5
+  流式导出，MIT）直接跑在 onnxruntime 上的端点检测，为默认引擎；`VOICE_IN_VAD=
+  energy` 或模型不可用时改用能量 VAD。旧 audio.cpp HTTP 轮询路径已删除。
+- **chunk**：Silero 流式模型的固定输入单位，512 样本（32 ms @ 16 kHz）；宿主侧维
+  护 64 样本 context（上一 chunk 尾部）与 `[2,1,128]` 状态张量逐 chunk 回接。
+- **滞回阈值 / hysteresis**：概率 ≥ `VOICE_IN_VAD_THRESHOLD`（默认 0.5）算语音、
+  < threshold−0.15 算非语音；两阈值之间保持当前状态，句中短停顿不被误切。
+- **静音窗 / min silence**：非语音概率需连续覆盖 100 ms 才闭合句段出端点（官方
+  `min_silence_duration_ms`）。
+- **语音垫 / speech pad**：端点音频在语音起止之外各外扩 30 ms（官方
+  `speech_pad_ms`），与 `VOICE_IN_VAD_MIN_SPEECH_MS` 的噪声过滤共同决定端点音频。
+- **能量降级 / energy degradation**：模型加载失败（构建期）或推理连续
+  `MAX_VAD_FAILURES` 次失败（运行期，本连接内永久，重连或重启恢复）时改用能量
+  VAD；两者管道行为与 `VOICE_IN_VAD=energy` 完全一致。
+
 ## 降噪（ADR-0006）
 
 - **降噪 / speech enhancement**：采集与端点检测之间的进程内 GTCRN 流式语音增

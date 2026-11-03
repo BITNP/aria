@@ -8,7 +8,9 @@
 - **降噪（语音增强）**：采集后先用随包分发的 GTCRN 流式模型逐帧降噪（ADR-0006），
   VAD、ASR 与说话人识别一律消费降噪后的音频；`VOICE_IN_DENOISE=0` 或模型不可用时
   直接使用原始麦克风音频。
-- **端点检测（VAD）**：识别一段语音的起止（静音分段），把一段语音聚合成一个端点。
+- **端点检测（VAD）**：默认用随包分发的 Silero VAD ONNX 模型进程内逐帧检测语音
+  起止，把一段语音聚合成一个端点（ADR-0007）；`VOICE_IN_VAD=energy` 或模型不可用
+  时改用能量 VAD。
 - **ASR**：调用 OpenAI 兼容的语音识别服务，把端点音频转成文本。默认走**真流式
   live 路径**（`POST /v1/audio/transcriptions/live`）：语音在途时边采集边上传，
   服务端边解码边回 SSE 增量文本，端点产生后再等最终结果（实测端点后约 40ms 出
@@ -31,6 +33,7 @@
 - 一个 OpenAI 兼容的 ASR 服务（地址 + 模型名 + 可选 API Key）。本机部署为 audio.cpp（`http://127.0.0.1:8080`，模型 `nemotron-3.5-asr-streaming`，与 presenter 的 TTS 共用同一服务；本地服务无需密钥）。
 - 说话人识别模型随包分发在 `src/voice_input/models/`（组内导出的 CAM++ ONNX，约 30 MB，已随仓库提交，不读环境变量）；模型缺失或加载失败时模块自动降级为无 ID 模式，其余功能不受影响。
 - GTCRN 降噪模型同样随包分发在 `src/voice_input/models/`（`gtcrn_simple.onnx`，约 523 KB，来源与校验和见下文「降噪」一节）；缺失或加载失败时自动不降噪，其余功能不受影响。
+- Silero VAD 模型同样随包分发在 `src/voice_input/models/`（`silero_vad.onnx`，约 2.2 MB，来源与校验和见下文「端点检测」一节）；缺失或加载失败时自动改用能量 VAD，其余功能不受影响。
 
 ## 安装与配置
 
@@ -52,7 +55,6 @@ WAYCAST_HUB_TOKEN=填写核心分配给语音输入的连接令牌
 VOICE_IN_ASR_ENDPOINT=http://127.0.0.1:8080/v1
 VOICE_IN_ASR_MODEL=nemotron-3.5-asr-streaming
 VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
-VOICE_IN_VAD_URL=http://127.0.0.1:8080
 ```
 
 可选配置项：
@@ -60,10 +62,9 @@ VOICE_IN_VAD_URL=http://127.0.0.1:8080
 | 配置项 | 用途 |
 | --- | --- |
 | VOICE_IN_DEVICE | 指定麦克风设备名称；不填用系统默认输入设备 |
-| VOICE_IN_VAD_URL | audio.cpp 服务地址（如 `http://127.0.0.1:8080`）；填写后用 Silero VAD 做端点检测（ADR-0003），不填用能量 VAD |
-| VOICE_IN_VAD_MODEL | audio.cpp 上的 VAD 模型 id（默认 `silero-vad`） |
-| VOICE_IN_VAD_POLL_MS | Silero 分段轮询间隔毫秒（默认 300） |
-| VOICE_IN_VAD_MIN_SPEECH_MS | 短于此长度的分段视为噪声丢弃（默认 250） |
+| VOICE_IN_VAD | 端点检测引擎（默认 `silero`：进程内 Silero VAD ONNX，ADR-0007；设 `energy` 强制能量 VAD） |
+| VOICE_IN_VAD_THRESHOLD | Silero 语音判定概率阈值（默认 0.5；负阈值自动取 threshold−0.15） |
+| VOICE_IN_VAD_MIN_SPEECH_MS | 短于此长度的语音段视为噪声丢弃（默认 250） |
 | VOICE_IN_VAD_SPEECH_THRESHOLD | VAD 语音判定能量阈值（默认 300；能量 VAD 与降级路径使用） |
 | VOICE_IN_VAD_TRAILING_SILENCE_FRAMES | 判定一句结束所需的连续静音帧数（默认 20） |
 | VOICE_IN_VAD_MAX_FRAMES | 单段语音最大帧数（默认 1500） |
@@ -98,24 +99,33 @@ VOICE_IN_VAD_URL=http://127.0.0.1:8080
 - 对照实验：官方带噪 wav 可通过 `VOICE_IN_GTCRN_WAV=<16kHz 单声道 wav>` 运行
   opt-in 测试（默认跳过）。
 
-## 端点检测（VAD）
+## 端点检测（VAD，ADR-0007）
 
-端点检测分两层（ADR-0003）：
+端点检测默认是**进程内流式 Silero VAD**（`VOICE_IN_VAD`，默认开）：官方 ONNX 流式
+导出（[snakers4/silero-vad](https://github.com/snakers4/silero-vad)，MIT）直接跑在
+onnxruntime 上，不再经 audio.cpp 的 HTTP 任务路由（取代 ADR-0003/0004 的轮询式设计）。
 
-- **Silero VAD（首选）**：`VOICE_IN_VAD_URL` 指向 audio.cpp 服务时启用。采集缓冲每
-  `VOICE_IN_VAD_POLL_MS` 送一次 `POST /v1/tasks/run`（WAV base64，补齐到 512 样本的
-  整窗），服务端在全新的 stream 上重放整窗得到语音分段；缓冲尾音超出最后分段末尾达到
-  「尾静音时长 + 盲区余量（0.26s）」即判一句结束。盲区余量是源码核实的服务端语义
-  （ADR-0004）：streaming 会话的参数在模型装载时固定（语音阈值 0.5 / 最短语音
-  250ms / 最短静音 100ms / 尾垫 30ms），**逐请求 options 会被服务端解析但忽略**；
-  ≥100ms 的停顿会切开分段，而缓冲末尾仍在进行的语音要超过 250ms 最短语音门限才会
-  出现在结果里——这段可见性延迟就是盲区余量覆盖的对象，句中短暂停顿不会被误切，
-  低音量语音也不再被能量阈值截断。
-- **能量 VAD（兜底）**：默认路径；Silero 服务连续轮询失败后**永久降级**到它（日志
-  warning），audio.cpp 挂掉不影响采集链路。恢复 Silero 需重启本模块。
-
-两种路径共用 `VOICE_IN_VAD_TRAILING_SILENCE_FRAMES`（句尾静音）与
-`VOICE_IN_VAD_MAX_FRAMES`（单句上限）语义；每个端点仍是一个 waycast input 帧。
+- **模型**：随包分发 `src/voice_input/models/silero_vad.onnx`（v5/opset16 流式导出，
+  2,327,524 字节，sha256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`，
+  git blob `80c5592e…` 与官方仓库 master 树对象核对一致）。每 512 样本（32 ms）一个
+  chunk 推理：宿主维护 64 样本 context 与 `[2,1,128]` 状态回接，语义与官方
+  `OnnxWrapper` 一致；推理走 `asyncio.to_thread`，护住采集泵。
+- **判定语义**（官方 `utils_vad` 后处理的流式化）：概率 ≥ `VOICE_IN_VAD_THRESHOLD`
+  （默认 0.5）触发语音起点；只有低于负阈值（threshold−0.15）的概率才启动静音计时，
+  连续静音达 100 ms（官方 `min_silence_duration_ms`）即出端点；两阈值之间的概率保持
+  句段开放——句中换气不会被切。语音段短于 `VOICE_IN_VAD_MIN_SPEECH_MS`（默认 250）
+  视为噪声丢弃；单句仍受 `VOICE_IN_VAD_MAX_FRAMES` 封顶。端点音频 = 语音起止各外扩
+  30 ms（官方 `speech_pad_ms`）。
+- **延迟**：句尾判定 ≈ 尾静音 100 ms + chunk 量化（32 ms），取代旧路径的「尾静音 +
+  盲区 0.26 s + 轮询 0.3 s ≈ 0.96 s」——盲区与轮询都是 audio.cpp 逐请求 reset 服务
+  逻辑的补丁，进程内连续状态后不再存在。实测（12 核 x86 单线程，官方 60s 测试语音）
+  端到端 RTF 0.011，切出 19 个端点、语音合计 47.5 s。
+- **降级**：模型缺失/加载失败 → 直接用能量 VAD（行为与 `VOICE_IN_VAD=energy` 完全
+  一致）；推理连续 3 次失败 → 本连接**永久降级**能量 VAD（日志 warning，重连或重启
+  恢复）。能量路径参数（`VOICE_IN_VAD_SPEECH_THRESHOLD` /
+  `VOICE_IN_VAD_TRAILING_SILENCE_FRAMES` / `VOICE_IN_VAD_PRE_ROLL_FRAMES`）不变。
+- **对照实验**：官方语音 wav 可通过 `VOICE_IN_SILERO_WAV=<16kHz 单声道 wav>` 运行
+  opt-in 测试（默认跳过）。
 
 ## ASR：真流式 live 路径与批量回退（ADR-0005）
 
@@ -176,6 +186,6 @@ uv run --locked basedpyright
 
 ## 相关链接
 
-- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测、0005 真流式 ASR、0006 进程内 GTCRN 降噪）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
+- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
 - 核心仓库：[waycast](../waycast/)，契约文档见 ADR-0008（waycast/docs/adr/0008-module-network-protocol.md）、ADR-0011（waycast/docs/adr/0011-agent-decides-turn-taking.md）。
 - 旧语音输入实现（只读参考，不复用）：[bitnp-raspberrygirl-vtuber-mic](../bitnp-raspberrygirl-vtuber-mic/)。

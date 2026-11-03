@@ -32,7 +32,7 @@ from voice_input.config import load_settings
 from voice_input.denoise import Enhancer, build_enhancer
 from voice_input.hub_client import MODULE_NAME, HubConnectionError, InputClient
 from voice_input.live_asr import LiveAsrTracker, LiveTranscriptStream, live_url_for
-from voice_input.silero_vad import SileroEndpointer, SileroVadClient
+from voice_input.silero_vad import SileroEndpointer, build_vad_model
 from voice_input.speaker import (
     SpeakerIdentifier,
     build_speaker_identifier,
@@ -125,10 +125,11 @@ async def _recognize_and_send(
 
 
 def build_endpointer(settings: Any) -> Endpointer:
-    """Model-backed endpointer when VOICE_IN_VAD_URL is set, else the energy VAD.
+    """In-process Silero VAD by default, energy VAD on demand or on load failure.
 
-    The Silero endpointer degrades to the energy detector internally if the
-    audio.cpp service keeps failing (ADR-0003).
+    ``VOICE_IN_VAD=energy`` skips the model entirely; a missing or unloadable
+    bundled model degrades the same way (ADR-0007).  The Silero endpointer also
+    degrades to the energy detector on its own if inference keeps failing.
     """
     energy = EnergyEndpointer(
         EndpointDetector(
@@ -138,15 +139,16 @@ def build_endpointer(settings: Any) -> Endpointer:
             pre_roll_frames=settings.pre_roll_frames,
         )
     )
-    if settings.vad_url is None:
+    if settings.vad_engine == "energy":
         return energy
-    LOGGER.info("silero VAD enabled: %s model=%s", settings.vad_url, settings.vad_model)
+    model = build_vad_model()
+    if model is None:
+        return energy
     return SileroEndpointer(
-        SileroVadClient(settings.vad_url, settings.vad_model),
+        model,
         fallback=energy,
-        poll_s=settings.vad_poll_ms / 1000,
+        threshold=settings.vad_threshold,
         min_speech_ms=settings.vad_min_speech_ms,
-        trailing_silence_frames=settings.trailing_silence_frames,
         max_frames=settings.max_frames,
     )
 

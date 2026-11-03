@@ -5,8 +5,9 @@ module connects to the waycast hub (WAYCAST_HUB_URL / WAYCAST_HUB_TOKEN) and
 transcribes microphone audio with an OpenAI-compatible ASR service
 (VOICE_IN_ASR_ENDPOINT / VOICE_IN_ASR_MODEL / VOICE_IN_ASR_API_KEY).
 
-Endpoint detection uses the energy VAD unless VOICE_IN_VAD_URL points at an
-audio.cpp server whose silero_vad model then drives endpointing (ADR-0003).
+Endpoint detection defaults to the in-process Silero VAD ONNX model (ADR-0007),
+with the energy VAD as automatic fallback when the model cannot load and as the
+forced choice via VOICE_IN_VAD=energy.
 Transcription prefers the streaming live route on the same ASR server and falls
 back to the batch route per utterance on failure (ADR-0005); VOICE_IN_ASR_LIVE=0
 disables the live path outright.
@@ -33,9 +34,8 @@ VAD_SPEECH_THRESHOLD_KEY: Final = "VOICE_IN_VAD_SPEECH_THRESHOLD"
 VAD_TRAILING_SILENCE_FRAMES_KEY: Final = "VOICE_IN_VAD_TRAILING_SILENCE_FRAMES"
 VAD_MAX_FRAMES_KEY: Final = "VOICE_IN_VAD_MAX_FRAMES"
 VAD_PRE_ROLL_FRAMES_KEY: Final = "VOICE_IN_VAD_PRE_ROLL_FRAMES"
-VAD_URL_KEY: Final = "VOICE_IN_VAD_URL"
-VAD_MODEL_KEY: Final = "VOICE_IN_VAD_MODEL"
-VAD_POLL_MS_KEY: Final = "VOICE_IN_VAD_POLL_MS"
+VAD_ENGINE_KEY: Final = "VOICE_IN_VAD"
+VAD_THRESHOLD_KEY: Final = "VOICE_IN_VAD_THRESHOLD"
 VAD_MIN_SPEECH_MS_KEY: Final = "VOICE_IN_VAD_MIN_SPEECH_MS"
 ASR_LIVE_KEY: Final = "VOICE_IN_ASR_LIVE"
 ASR_LIVE_TIMEOUT_MS_KEY: Final = "VOICE_IN_ASR_LIVE_TIMEOUT_MS"
@@ -46,13 +46,14 @@ DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
 DEFAULT_MAX_FRAMES: Final = 1_500
 DEFAULT_PRE_ROLL_FRAMES: Final = 5
-DEFAULT_VAD_MODEL: Final = "silero-vad"
-DEFAULT_VAD_POLL_MS: Final = 300
 DEFAULT_VAD_MIN_SPEECH_MS: Final = 250
+DEFAULT_VAD_ENGINE: Final = "silero"
+DEFAULT_VAD_THRESHOLD: Final = 0.5
 DEFAULT_ASR_LIVE_TIMEOUT_MS: Final = 10_000
 DEFAULT_ASR_LIVE_MAX_FAILURES: Final = 3
 
 _TRUE_VALUES: Final = {"1", "true", "yes", "on"}
+_VAD_ENGINES: Final = ("silero", "energy")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,9 +69,8 @@ class Settings:
     trailing_silence_frames: int = DEFAULT_TRAILING_SILENCE_FRAMES
     max_frames: int = DEFAULT_MAX_FRAMES
     pre_roll_frames: int = DEFAULT_PRE_ROLL_FRAMES
-    vad_url: str | None = None
-    vad_model: str = DEFAULT_VAD_MODEL
-    vad_poll_ms: int = DEFAULT_VAD_POLL_MS
+    vad_engine: str = DEFAULT_VAD_ENGINE
+    vad_threshold: float = DEFAULT_VAD_THRESHOLD
     vad_min_speech_ms: int = DEFAULT_VAD_MIN_SPEECH_MS
     asr_live: bool = True
     asr_live_timeout_ms: int = DEFAULT_ASR_LIVE_TIMEOUT_MS
@@ -114,9 +114,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         pre_roll_frames=_parse_int(
             source, VAD_PRE_ROLL_FRAMES_KEY, DEFAULT_PRE_ROLL_FRAMES, minimum=0
         ),
-        vad_url=_optional_url(source.get(VAD_URL_KEY)),
-        vad_model=source.get(VAD_MODEL_KEY, "").strip() or DEFAULT_VAD_MODEL,
-        vad_poll_ms=_parse_int(source, VAD_POLL_MS_KEY, DEFAULT_VAD_POLL_MS, minimum=50),
+        vad_engine=_parse_choice(source, VAD_ENGINE_KEY, DEFAULT_VAD_ENGINE, _VAD_ENGINES),
+        vad_threshold=_parse_float(source, VAD_THRESHOLD_KEY, DEFAULT_VAD_THRESHOLD),
         vad_min_speech_ms=_parse_int(
             source, VAD_MIN_SPEECH_MS_KEY, DEFAULT_VAD_MIN_SPEECH_MS, minimum=1
         ),
@@ -138,11 +137,26 @@ def _parse_bool(source: Mapping[str, str], key: str, *, default: bool) -> bool:
     return raw.lower() in _TRUE_VALUES
 
 
-def _optional_url(value: str | None) -> str | None:
-    url = _optional_text(value)
-    if url is not None and not url.startswith(("http://", "https://")):
-        raise ConfigError(key=VAD_URL_KEY, reason="must be an http:// or https:// URL")
-    return url
+def _parse_choice(source: Mapping[str, str], key: str, default: str, allowed: tuple[str, ...]) -> str:
+    raw = source.get(key, "").strip().lower()
+    if raw == "":
+        return default
+    if raw not in allowed:
+        raise ConfigError(key=key, reason=f"must be one of {' / '.join(allowed)}")
+    return raw
+
+
+def _parse_float(source: Mapping[str, str], key: str, default: float) -> float:
+    raw = source.get(key, "").strip()
+    if raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(key=key, reason="must be a number") from exc
+    if not 0.0 < value < 1.0:
+        raise ConfigError(key=key, reason="must be between 0 and 1 (exclusive)")
+    return value
 
 
 def _required(source: Mapping[str, str], key: str) -> str:

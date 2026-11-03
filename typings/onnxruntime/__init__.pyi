@@ -24,8 +24,19 @@ class ModelMetadata:
     custom_metadata_map: dict[str, str]
 
 
+class SessionOptions:
+    intra_op_num_threads: int
+    inter_op_num_threads: int
+
+
 class InferenceSession:
-    def __init__(self, path: str | Path, *, providers: Sequence[str]) -> None: ...
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        providers: Sequence[str],
+        sess_options: SessionOptions | None = None,
+    ) -> None: ...
     def get_providers(self) -> list[str]: ...
     def get_inputs(self) -> Sequence[NodeArg]: ...
     def get_outputs(self) -> Sequence[NodeArg]: ...

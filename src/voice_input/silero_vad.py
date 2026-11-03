@@ -1,250 +1,413 @@
-"""Model-backed speech endpointing via an audio.cpp Silero VAD deployment.
+"""Streaming endpoint detection with the bundled Silero VAD ONNX model (ADR-0007).
 
-The audio.cpp server exposes its streaming ``silero_vad`` model through the
-generic task route (``POST /v1/tasks/run`` with a base64 WAV and the model id);
-each request replays the WAV as fixed 512-sample windows on a freshly reset
-stream and returns absolute speech segments as sample indices at 16 kHz, so
-the payload is zero-padded to a whole number of windows before posting
-(ADR-0003, ADR-0004).
+The audio.cpp HTTP task route is gone: the official streaming export
+(github.com/snakers4/silero-vad, MIT) runs in-process on onnxruntime, mirroring
+the OnnxWrapper semantics exactly -- one 512-sample chunk (32 ms @ 16 kHz) at a
+time, a 64-sample context from the previous chunk prepended on the host side,
+and the ``state [2, 1, 128]`` tensor fed back on every call.  Because state
+persists across the whole connection, the polling artifacts of the old route
+(ADR-0003/0004: full-buffer re-segmentation, per-request resets, the 4160-sample
+blind window) no longer exist and endpoint latency is set by the detector itself.
 
-Server semantics verified from audio.cpp source (ADR-0004): the streaming
-session decodes with fixed defaults (threshold 0.5 / neg-threshold 0.35,
-min speech 250 ms, min silence 100 ms, speech pad 30 ms); per-request
-``options`` are parsed but never consumed on the streaming path, so nothing
-here tries to tune them.  Segments split at pauses >= 100 ms; a segment still
-open at the buffer end only appears once it exceeds the 250 ms min-speech
-gate, which is the visibility lag a resuming utterance is invisible through.
+Endpointing follows the official post-processing (``utils_vad`` hysteresis):
+speech triggers at ``probability >= threshold`` (default 0.5), only probabilities
+below ``threshold - 0.15`` start a silence timer, and silence of
+``MIN_SILENCE_SAMPLES`` (100 ms, official default) closes the utterance.  Gaps
+between the two thresholds neither extend nor cancel the timer -- faithful
+translation, max-segment-length branches are dropped because this module caps
+length via ``max_frames`` instead.  A closed span shorter than
+``min_speech_ms`` is discarded as noise (the live ASR session, if any, is
+aborted by the tracker when ``utterance_open`` goes back to False).
 
-Endpointing polls the model on the growing utterance buffer: every ``poll_s``
-the buffer is re-segmented and an endpoint fires once the audio after the last
-segment end reaches the configured trailing silence plus a blind-window margin
-covering that visibility lag (or the hard max-length cap is hit).  Leading
-silence is trimmed as it settles and too-short spans are discarded as noise.
+Frame contract: ``feed`` takes one 640-byte mic frame; chunk boundaries fall
+inside frames (LCM(320, 512) = 2560), so samples buffer across feeds.  Emitted
+utterance audio is ``[speech_start - 30 ms, end + 30 ms]`` clipped to the
+buffer; ``utterance_audio`` reports ``[speech_start - pad, fed)`` so the live
+ASR session streams exactly the bytes the endpoint will emit (the frames that
+trigger a close may carry up to one chunk of trailing silence the live stream
+never saw -- silence only, which costs the transcript nothing).
 
-If the service keeps failing, the endpointer degrades permanently to the
-bundled energy detector so the pipeline survives an audio.cpp outage.
+Failure policy mirrors the other model paths: an inference fault skips that one
+chunk (state survives), ``MAX_VAD_FAILURES`` consecutive faults permanently
+degrade this connection to the energy endpointer (one warning; reconnect or
+restart to recover), and a model that cannot be loaded at startup never builds
+-- ``build_vad_model`` returns None and the pipeline runs on energy VAD.
 """
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
-from typing import Final, cast
+from collections.abc import Mapping, Sequence
+from importlib.resources import files
+from pathlib import Path
+from typing import Any, Final, Protocol
 
-import httpx
+import numpy
+import numpy.typing as npt
 
 from voice_input.vad import (
+    FRAME_BYTES,
     FRAME_SAMPLES,
     SAMPLE_RATE_HZ,
-    EnergyEndpointer,
+    Endpointer,
     SpeechSegment,
-    wav_bytes,
 )
 
 LOGGER = logging.getLogger(__name__)
 
-WINDOW_SAMPLES: Final = 512  # the streaming model's fixed chunk (32 ms @ 16 kHz)
-# A resuming utterance stays invisible to polls until its open segment passes
-# the server's fixed 250 ms min-speech gate: 4000 samples minus the 30 ms
-# speech pad, plus 512-sample onset quantization, plus margin (ADR-0004).
-BLIND_WINDOW_SAMPLES: Final = 4_160
-MAX_POLL_FAILURES: Final = 3
-KEEP_SILENCE_SAMPLES: Final = 8_000  # bounded silence kept while nothing is detected
-LEAD_PAD_SAMPLES: Final = 1_600  # audio kept before the first detected segment
-TAIL_PAD_SAMPLES: Final = 1_600  # audio kept after the last detected segment
+WINDOW_SAMPLES: Final = 512  # the model's fixed chunk (32 ms @ 16 kHz)
+CONTEXT_SAMPLES: Final = 64  # previous-chunk tail prepended to every feed
+STATE_SHAPE: Final = (2, 1, 128)
+MIN_SILENCE_SAMPLES: Final = 1_600  # official min_silence_duration_ms = 100
+SPEECH_PAD_SAMPLES: Final = 480  # official speech_pad_ms = 30
+NEG_THRESHOLD_OFFSET: Final = 0.15  # official neg = threshold - 0.15
+RING_SAMPLES: Final = 1_600  # idle audio kept for the next onset's lead pad
+DEFAULT_THRESHOLD: Final = 0.5
+MAX_VAD_FAILURES: Final = 3
+MODEL_REVISION: Final = "silero-vad-v5-onnx"
+
 _SAMPLES_PER_MS: Final = SAMPLE_RATE_HZ // 1000
+Array = npt.NDArray[Any]
 
 
-class SileroVadClient:
-    """Client for one audio.cpp silero_vad deployment (generic task route).
+class VadModel(Protocol):
+    """Per-chunk probability surface used by the endpointer.
 
-    ``segments`` returns the speech segments of ``pcm16le`` as
-    ``(start_sample, end_sample)`` pairs at 16 kHz, raising on any transport or
-    protocol failure. Pass an injected httpx.AsyncClient in tests to avoid
-    real network I/O; when one is injected it is not closed here.
+    ``run_chunks`` consumes 512-sample float32 chunks in order and returns one
+    speech probability each; implementations keep the streaming state (context
+    + recurrent state) between calls.
+    """
+
+    model_revision: str
+
+    def run_chunks(self, chunks: Sequence[numpy.ndarray]) -> list[float]: ...
+
+
+class _NodeMeta(Protocol):
+    name: str
+    shape: Sequence[int | str | None]
+    type: str
+
+
+class _VadSession(Protocol):
+    """The subset of onnxruntime.InferenceSession this module calls.
+
+    Tests inject session stand-ins (tests/ only, ADR-0002 testing rules); the
+    validation below runs against whatever object is used, so a stand-in must
+    present the real graph's names, shapes and types.
+    """
+
+    def run(
+        self,
+        output_names: Sequence[str] | None,
+        input_feed: Mapping[str, object],
+        run_options: object | None = None,
+    ) -> Sequence[Array]: ...
+
+    def get_inputs(self) -> Sequence[_NodeMeta]: ...
+
+    def get_outputs(self) -> Sequence[_NodeMeta]: ...
+
+    def get_providers(self) -> list[str]: ...
+
+
+class SileroVadModel:
+    """Stateful streaming runner for the bundled ``silero_vad.onnx`` graph.
+
+    Validation is strict because the model is fixed: float ``input`` with
+    ``[2, batch, 128]`` float state and an int64 ``sr`` scalar, returning the
+    ``[batch, 1]`` probability plus a state of the input shape.
     """
 
     def __init__(
         self,
-        base_url: str,
-        model: str,
+        model_path: Path | None = None,
         *,
-        client: httpx.AsyncClient | None = None,
+        session: _VadSession | None = None,
     ) -> None:
-        self._url = base_url.rstrip("/") + "/v1/tasks/run"
-        self._model = model
-        self._client = client if client is not None else _default_client()
-        self._owns_client = client is None
+        if SAMPLE_RATE_HZ != 16_000:  # the fixed 512-sample window is 16 kHz-only
+            raise ValueError("the bundled Silero VAD model requires a 16 kHz pipeline")
+        if session is None:
+            import onnxruntime  # local import keeps this module importable without ORT
 
-    async def segments(self, pcm16le: bytes) -> list[tuple[int, int]]:
-        sample_count = len(pcm16le) // 2
-        padded = pcm16le + b"\x00" * ((-sample_count) % WINDOW_SAMPLES) * 2
-        response = await self._client.post(
-            self._url,
-            json={
-                "model": self._model,
-                "request": {"audio_base64": base64.b64encode(wav_bytes(padded)).decode()},
-            },
-        )
-        response.raise_for_status()
-        return _parse_segments(response.json())
+            if model_path is None:
+                raise ValueError("either model_path or session must be given")
+            if not model_path.is_file():
+                raise FileNotFoundError(f"bundled Silero VAD model not found: {model_path}")
+            options = onnxruntime.SessionOptions()
+            options.intra_op_num_threads = 1  # official OnnxWrapper settings: one thread
+            options.inter_op_num_threads = 1
+            session = onnxruntime.InferenceSession(
+                str(model_path),
+                providers=["CPUExecutionProvider"],
+                sess_options=options,
+            )
+        self._session = session
+        _validate_session(session)
+        self.model_revision = MODEL_REVISION
+        self.onnx_provider = (session.get_providers() or ["unknown"])[0]
+        self._state = numpy.zeros(STATE_SHAPE, dtype=numpy.float32)
+        self._context = numpy.zeros(CONTEXT_SAMPLES, dtype=numpy.float32)
 
-    async def aclose(self) -> None:
-        if self._owns_client:
-            await self._client.aclose()
+    def reset(self) -> None:
+        self._state = numpy.zeros(STATE_SHAPE, dtype=numpy.float32)
+        self._context = numpy.zeros(CONTEXT_SAMPLES, dtype=numpy.float32)
 
-
-def _parse_segments(value: object) -> list[tuple[int, int]]:
-    """Validate the task-run response shape, raising ValueError when malformed."""
-    if not isinstance(value, dict):
-        raise ValueError("silero VAD response is not a JSON object")
-    data = cast("dict[str, object]", value)
-    raw_segments = data.get("segments", [])
-    if not isinstance(raw_segments, list):
-        raise ValueError("silero VAD segments field is not a list")
-    segments: list[tuple[int, int]] = []
-    for item in cast("list[object]", raw_segments):
-        if not isinstance(item, dict):
-            raise ValueError("silero VAD segment is not a JSON object")
-        segment = cast("dict[str, object]", item)
-        start, end = segment.get("start_sample"), segment.get("end_sample")
-        if isinstance(start, bool) or isinstance(end, bool):
-            raise ValueError("silero VAD segment bounds are not numbers")
-        if not isinstance(start, int | float) or not isinstance(end, int | float):
-            raise ValueError("silero VAD segment lacks sample bounds")
-        segments.append((int(start), int(end)))
-    return segments
+    def run_chunks(self, chunks: Sequence[numpy.ndarray]) -> list[float]:
+        """Feed 512-sample float32 chunks (state carried across calls); one prob each."""
+        probs: list[float] = []
+        for chunk in chunks:
+            fed = numpy.concatenate((self._context, chunk))
+            outputs = self._session.run(
+                None,
+                {
+                    "input": numpy.ascontiguousarray(fed.reshape(1, -1), dtype=numpy.float32),
+                    "state": self._state,
+                    "sr": numpy.array(SAMPLE_RATE_HZ, dtype=numpy.int64),
+                },
+            )
+            prob = numpy.asarray(outputs[0], dtype=numpy.float32).reshape(-1)
+            state = numpy.asarray(outputs[1], dtype=numpy.float32)
+            if prob.size != 1 or not numpy.isfinite(prob).all() or not numpy.isfinite(state).all():
+                raise ValueError("Silero VAD returned a non-finite chunk result")
+            if state.shape != STATE_SHAPE:
+                raise ValueError(f"Silero VAD state shape {state.shape} != {STATE_SHAPE}")
+            self._state = state
+            self._context = fed[-CONTEXT_SAMPLES:].astype(numpy.float32)
+            probs.append(float(prob[0]))
+        return probs
 
 
 class SileroEndpointer:
-    """Endpointer over Silero segments (Endpointer surface, async feed).
+    """Endpointer over in-process Silero probabilities (Endpointer surface).
 
-    Every pushed frame grows the utterance buffer; the buffer is re-segmented
-    at most once per ``poll_s``. An endpoint is emitted when the buffer tail
-    past the last segment end reaches ``trailing_silence_frames`` of audio
-    plus a blind-window margin (or the ``max_frames`` cap is reached); the
-    margin covers the server's ``min_speech_duration_ms`` lag so a resuming
-    utterance is visible before the turn can be cut. Emitted audio spans the
-    detected segments plus the lead/tail pads.
+    The hysteresis state machine (see module docstring) runs per 512-sample
+    chunk; inference happens off the event loop via ``asyncio.to_thread`` so a
+    slow core never stalls the capture pump.  Sample coordinates are absolute
+    per endpointer (per hub connection), which mirrors the endpointer's own
+    lifetime.
     """
 
     def __init__(
         self,
-        client: SileroVadClient,
+        model: VadModel,
         *,
-        fallback: EnergyEndpointer,
-        poll_s: float = 0.3,
+        fallback: Endpointer,
+        threshold: float = DEFAULT_THRESHOLD,
         min_speech_ms: int = 250,
-        trailing_silence_frames: int = 20,
         max_frames: int = 1_500,
     ) -> None:
-        self._client = client
+        if not 0.0 < threshold < 1.0:
+            raise ValueError("silero VAD threshold must be between 0 and 1")
+        if max_frames < 1:
+            raise ValueError("max_frames must be positive")
+        self._model = model
         self._fallback = fallback
-        self._poll_s = poll_s
+        self._threshold = threshold
+        self._neg_threshold = max(threshold - NEG_THRESHOLD_OFFSET, 0.01)
         self._min_speech_samples = min_speech_ms * _SAMPLES_PER_MS
-        self._trailing_samples = trailing_silence_frames * FRAME_SAMPLES
         self._max_samples = max_frames * FRAME_SAMPLES
-        self._buffer = bytearray()
-        self._start_sample = 0
-        self._last_poll = 0.0
+        self.model_revision = getattr(model, "model_revision", "unknown")
+
+        self._pcm = bytearray()  # audio held for the current/idle utterance
+        self._pcm_start = 0  # absolute sample index of _pcm[0]
+        self._fed = 0  # samples handed in since construction
+        self._chunk_pos = 0  # samples consumed by the model (chunk-aligned)
+        self._triggered = False
+        self._speech_start = 0
+        self._temp_end = 0  # 0 = unset; only ever set while triggered (then > 0)
         self._failures = 0
-        self._degraded = False
-        self._open = False
+        self.degraded = False
+
+    @property
+    def vad_engine(self) -> str:
+        return "energy" if self.degraded else "silero"
 
     async def feed(self, frame: bytes, sample: int) -> SpeechSegment | None:
-        if self._degraded:
+        if self.degraded:
             return await self._fallback.feed(frame, sample)
-        if not self._buffer:
-            self._start_sample = sample
-        self._buffer.extend(frame)
-        now = asyncio.get_running_loop().time()
-        if now - self._last_poll < self._poll_s:
-            return None
-        self._last_poll = now
-        try:
-            segments = await self._client.segments(bytes(self._buffer))
-        except Exception:  # noqa: BLE001 - any poll fault degrades, never drops the loop
-            self._failures += 1
-            LOGGER.debug("silero VAD poll failed (x%d)", self._failures, exc_info=True)
-            if self._failures >= MAX_POLL_FAILURES:
-                LOGGER.warning(
-                    "silero VAD unreachable repeatedly; degrading to energy VAD"
-                )
-                self._degraded = True
-            return None
-        self._failures = 0
-        return self._evaluate(segments)
+        if len(frame) != FRAME_BYTES:
+            raise ValueError(f"frame must be exactly {FRAME_BYTES} PCM16 bytes")
+        self._pcm.extend(frame)
+        self._fed += FRAME_SAMPLES
+        while self._chunk_pos + WINDOW_SAMPLES <= self._fed:
+            chunk = self._take_chunk()
+            try:
+                prob = (await asyncio.to_thread(self._model.run_chunks, [chunk]))[0]
+            except Exception as exc:  # noqa: BLE001 - any model fault degrades, never drops the pump
+                self._failures += 1
+                LOGGER.debug("silero VAD chunk failed (x%d): %s", self._failures, exc)
+                if self._failures >= MAX_VAD_FAILURES:
+                    LOGGER.warning(
+                        "silero VAD failed %d consecutive chunks; degrading to energy VAD",
+                        self._failures,
+                    )
+                    self.degraded = True
+                    self._reset_utterance()
+                    return await self._fallback.feed(frame, sample)
+                continue
+            self._failures = 0
+            segment = self._on_probability(prob)
+            if segment is not None:
+                return segment
+        self._trim_idle_ring()
+        return None
 
     @property
     def utterance_open(self) -> bool:
-        if self._degraded:
+        if self.degraded:
             return self._fallback.utterance_open
-        return self._open
+        return self._triggered
 
     def utterance_audio(self) -> bytes:
-        if self._degraded:
+        if self.degraded:
             return self._fallback.utterance_audio()
-        return bytes(self._buffer) if self._open else b""
-
-    def _evaluate(self, segments: list[tuple[int, int]]) -> SpeechSegment | None:
-        end_samples = len(self._buffer) // 2
-        if not segments:
-            # Nothing but silence (or undetected noise) so far: keep a bounded
-            # pre-roll window so a late-detected onset still has lead-in audio.
-            # _open deliberately survives a transiently-empty poll: during the
-            # blind window (ADR-0004) a resuming utterance shows no segments.
-            self._trim_front(end_samples - KEEP_SILENCE_SAMPLES)
-            return None
-        self._open = True  # first detected speech starts the live-ASR window
-        first_start = min(start for start, _ in segments)
-        last_end = max(end for _, end in segments)
-        trimmed = max(0, first_start - LEAD_PAD_SAMPLES)
-        self._trim_front(trimmed)
-        first_start -= trimmed
-        last_end -= trimmed
-        end_samples -= trimmed
-        tail_silence = end_samples - last_end
-        if tail_silence < self._trailing_samples + BLIND_WINDOW_SAMPLES and (
-            end_samples < self._max_samples
-        ):
-            return None  # utterance still in progress
-        if last_end - first_start < self._min_speech_samples:
-            # Too short to be an utterance: drop it and keep listening.
-            self._trim_front(last_end)
-            self._open = False
-            return None
-        cut = min(last_end + TAIL_PAD_SAMPLES, end_samples)
-        segment = SpeechSegment(
-            pcm16le=bytes(self._buffer[: cut * 2]),
-            duration_ms=cut // _SAMPLES_PER_MS,
-        )
-        LOGGER.debug(
-            "silero endpoint: %d ms from start_sample=%d (buffer %d samples)",
-            segment.duration_ms,
-            self._start_sample,
-            end_samples,
-        )
-        self._trim_front(cut)
-        self._open = False
-        return segment
-
-    def _trim_front(self, samples: int) -> None:
-        if samples <= 0:
-            return
-        del self._buffer[: samples * 2]
-        self._start_sample = (self._start_sample + samples) % (1 << 32)
+        if not self._triggered:
+            return b""
+        return self._slice(max(self._speech_start - SPEECH_PAD_SAMPLES, self._pcm_start), self._fed)
 
     async def aclose(self) -> None:
-        await self._client.aclose()
         await self._fallback.aclose()
 
+    # ---- hysteresis state machine (faithful to official get_speech_timestamps) --
 
-def _default_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=httpx.Timeout(5.0),
-        follow_redirects=False,
-        trust_env=False,
+    def _on_probability(self, prob: float) -> SpeechSegment | None:
+        cur = self._chunk_pos  # absolute sample index of this chunk's first sample
+        self._chunk_pos += WINDOW_SAMPLES
+        if prob >= self._threshold:
+            self._temp_end = 0
+            if not self._triggered:
+                self._triggered = True
+                self._speech_start = cur
+                LOGGER.debug(
+                    "silero speech start at %d ms (prob %.3f)", cur // _SAMPLES_PER_MS, prob
+                )
+            elif cur - self._speech_start >= self._max_samples:
+                # official layout: a high probability while already triggered falls
+                # through to the max-length check (min-speech filter still applies)
+                return self._close(cur)  # hard cap: cut here
+            return None
+        if self._triggered and cur - self._speech_start >= self._max_samples:
+            return self._close(cur)
+        if self._triggered and prob < self._neg_threshold:
+            if self._temp_end == 0:
+                self._temp_end = cur
+            if cur - self._temp_end < MIN_SILENCE_SAMPLES:
+                return None
+            return self._close(self._temp_end)
+        return None  # between thresholds: hold the utterance open, timer untouched
+
+    def _close(self, end: int) -> SpeechSegment | None:
+        start = self._speech_start
+        segment: SpeechSegment | None = None
+        if end - start > self._min_speech_samples:
+            segment = SpeechSegment(
+                pcm16le=self._slice(max(start - SPEECH_PAD_SAMPLES, self._pcm_start), end),
+                duration_ms=(end - start) // _SAMPLES_PER_MS,
+            )
+            LOGGER.debug(
+                "silero endpoint: %d ms speech from %d ms",
+                segment.duration_ms,
+                start // _SAMPLES_PER_MS,
+            )
+        self._reset_utterance()
+        if segment is not None:
+            self._discard_before(end + SPEECH_PAD_SAMPLES)
+        return segment
+
+    def _reset_utterance(self) -> None:
+        self._triggered = False
+        self._speech_start = 0
+        self._temp_end = 0
+
+    # ---- audio bookkeeping ------------------------------------------------------
+
+    def _take_chunk(self) -> numpy.ndarray:
+        first = self._chunk_pos - self._pcm_start
+        chunk = numpy.frombuffer(self._pcm, dtype=numpy.int16)[first : first + WINDOW_SAMPLES]
+        return chunk.astype(numpy.float32) / 32768.0
+
+    def _slice(self, start: int, end: int) -> bytes:
+        first = (start - self._pcm_start) * 2
+        return bytes(self._pcm[first : (end - self._pcm_start) * 2])
+
+    def _discard_before(self, sample: int) -> None:
+        count = min(max(sample - self._pcm_start, 0), len(self._pcm) // 2)
+        if count:
+            del self._pcm[: count * 2]
+            self._pcm_start += count
+
+    def _trim_idle_ring(self) -> None:
+        if self._triggered:
+            return
+        # keep the idle ring, but never past the lead-pad reach of the next
+        # possible onset (chunk start - pad): that audio is emission territory
+        self._discard_before(
+            max(self._fed - RING_SAMPLES, self._chunk_pos - SPEECH_PAD_SAMPLES)
+        )
+
+
+def _validate_session(session: _VadSession) -> None:
+    """Reject anything that is not the official streaming Silero VAD graph."""
+    inputs = {node.name: node for node in session.get_inputs()}
+    if set(inputs) != {"input", "state", "sr"}:
+        raise ValueError(f"Silero VAD graph must expose input/state/sr, got {sorted(inputs)}")
+    if inputs["input"].type != "tensor(float)" or inputs["state"].type != "tensor(float)":
+        raise ValueError("Silero VAD input/state must be float tensors")
+    if inputs["sr"].type != "tensor(int64)":
+        raise ValueError("Silero VAD sr must be an int64 tensor")
+    if len(inputs["sr"].shape) != 0:
+        raise ValueError("Silero VAD sr must be a scalar tensor")
+    state_shape = list(inputs["state"].shape)
+    if len(state_shape) != 3:
+        raise ValueError(f"Silero VAD state shape {state_shape} must be 3-dimensional")
+    # the state's [2, batch, 128] dims are dynamic in the official export, so
+    # the exact shape is enforced at runtime in run_chunks instead
+    outputs = list(session.get_outputs())
+    if len(outputs) != 2:
+        raise ValueError("Silero VAD graph must return exactly the probability and the next state")
+    out_shape = list(outputs[0].shape)
+    if outputs[0].type != "tensor(float)" or out_shape[-1:] != [1] or len(out_shape) != 2:
+        raise ValueError(f"Silero VAD probability output shape {out_shape} must be [batch, 1]")
+
+
+def bundled_model_path() -> Path:
+    """Resolve the bundled Silero VAD model file (ADR-0007: never from the environment)."""
+    return Path(str(files("voice_input.models").joinpath("silero_vad.onnx")))
+
+
+def build_vad_model(model_path: Path | None = None) -> SileroVadModel | None:
+    """Load the bundled model; None keeps the caller on the energy VAD.
+
+    ``model_path`` is injectable for tests; production always uses the bundled
+    asset via ``bundled_model_path``.  Any load failure degrades to energy
+    endpointing (the pipeline behaves exactly as with VOICE_IN_VAD=energy).
+    """
+    path = model_path if model_path is not None else bundled_model_path()
+    try:
+        model = SileroVadModel(path)
+    except Exception as exc:  # noqa: BLE001 - any load fault degrades to energy VAD
+        LOGGER.warning("silero VAD model load failed (%s); using energy VAD", exc)
+        return None
+    LOGGER.info(
+        "silero VAD enabled in-process (revision=%s onnx_provider=%s)",
+        model.model_revision,
+        model.onnx_provider,
     )
+    return model
 
 
-__all__ = ["SileroVadClient", "SileroEndpointer", "WINDOW_SAMPLES", "MAX_POLL_FAILURES"]
+__all__ = [
+    "VadModel",
+    "SileroVadModel",
+    "SileroEndpointer",
+    "build_vad_model",
+    "bundled_model_path",
+    "WINDOW_SAMPLES",
+    "CONTEXT_SAMPLES",
+    "MIN_SILENCE_SAMPLES",
+    "SPEECH_PAD_SAMPLES",
+    "MAX_VAD_FAILURES",
+    "DEFAULT_THRESHOLD",
+    "MODEL_REVISION",
+]
