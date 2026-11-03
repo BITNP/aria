@@ -143,11 +143,16 @@ nemotron-3.5-asr-streaming 在终止块后约 40ms 出结果，即**出文本的
   去，此后每帧增量喂入；端点产生时把会话摘下交给识别 worker，worker 发终止块并
   等最终文本；VAD 把语音当噪声丢弃时直接断开连接（服务端随之释放模型占用）。
 - **回退**：会话失败、`VOICE_IN_ASR_LIVE_TIMEOUT_MS` 内没等到最终文本、或服务端
-  拒绝流式模型时，worker 用同一份端点 PCM 走批量转写，行为与关闭流式完全一致；
-  回退前先关闭 live 连接并留 150ms 让服务端释放模型锁，批量请求不会撞
-  「model is busy」。「模型被占用」属并发瞬时状态，只降级当次、不计失败；连续
-  `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败后本路径**永久关闭**（日志 warning），
-  重启模块才会重新启用。
+  拒绝流式模型时，worker 用同一份端点PCM 走批量转写，行为与关闭流式完全一致；
+  回退前先关闭本句 live 连接并留 150ms 让服务端释放模型锁。「模型被占用」属并发
+  瞬时状态，只降级当次、不计失败；连续 `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败后
+  本路径**永久关闭**（日志 warning），重启模块才会重新启用。
+- **空文本不回退**：live 协议成功但最终文本为空，是模型对过短/不可辨音频（实测
+  <0.5s）的正常输出；同一模型对同一段音频的批量结果必然也是空（实测同为 `''`），
+  回退只会白等。且 audio.cpp 的 ASR 模型**单实例串行**——请求存续期间任何别的
+  live 会话（如下句刚开的流式会话）都会把批量请求挂起直到超时（实测 25s+ 无响
+  应），因此批量兜底仅限流式路径真失败，且批量 HTTP 超时收敛到 8s，避免撞锁时
+  拖垮端点队列。
 - **实现约束**：httpx 无法在同一条 HTTP/1.1 连接上边发边收（发完请求体才开始读
   响应），live 客户端是裸 asyncio 的 chunked 上传 + 增量 SSE 解析；喂音频只入
   缓冲、由独立写任务刷出，网络背压不会卡住采集泵。live 路由语义以 audio.cpp
@@ -188,6 +193,6 @@ uv run --locked basedpyright
 
 ## 相关链接
 
-- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
+- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX、0008 live 空文本不回退批量〔修正 0005 回退语义〕）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
 - 核心仓库：[waycast](../waycast/)，契约文档见 ADR-0008（waycast/docs/adr/0008-module-network-protocol.md）、ADR-0011（waycast/docs/adr/0011-agent-decides-turn-taking.md）。
 - 旧语音输入实现（只读参考，不复用）：[bitnp-raspberrygirl-vtuber-mic](../bitnp-raspberrygirl-vtuber-mic/)。

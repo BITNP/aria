@@ -132,11 +132,19 @@ async def _recognize_and_send(
             text: str | None = None
             via = "live"
             if stream is not None and live is not None:
-                text = await live.finish(stream)
-                if text is not None:
-                    text = text.strip() or None
-                    if text is None:
-                        LOGGER.debug("live asr returned empty text; falling back to batch")
+                raw = await live.finish(stream)
+                if raw is not None:
+                    text = raw.strip()
+                    if not text:
+                        # 空文本是模型对过短/不可辨音频的正常输出（协议成功、非失败）：
+                        # 同一模型对同一段音频的批量结果必然也是空，回退批量只会与下
+                        # 一句的 live 会话抢单实例模型锁（audio.cpp 串行独占），挂到
+                        # 超时并拖垮端点队列。ADR-0005 的兜底只针对流式路径失败。
+                        LOGGER.debug(
+                            "empty live transcript for %d ms audio; dropping without batch fallback",
+                            speech_ms,
+                        )
+                        continue
                 else:
                     await live.discard(stream)  # 兜底：finish 已保证关闭，这里幂等
             elif stream is not None:

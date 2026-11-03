@@ -181,6 +181,28 @@ def test_failed_live_session_falls_back_to_batch_asr():
     assert ws.sent[0][0] == "批量兜底"
 
 
+def test_empty_live_final_drops_without_batch_fallback():
+    """live 协议成功但文本为空 = 模型对过短/不可辨音频的正常输出。
+
+    同一模型对同一段音频的批量结果必然也是空：回退批量只会与下一句的
+    live 会话抢单实例模型锁（audio.cpp 串行独占），挂到超时并拖垮端点队列。
+    """
+
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        tracker = _StubTracker("   ")  # 协议成功、文本为空
+        queue.put_nowait((b"\x00" * 640, 600, tracker.stream))
+        ws = _RecorderWs()
+        asr = _FakeAsr("不该被调用")
+        worker = asyncio.create_task(_recognize_and_send(ws, asr, None, queue, tracker))
+        await _drain(worker, queue, ws)
+        return ws, asr
+
+    ws, asr = asyncio.run(scenario())
+    assert asr.calls == 0  # 空文本不回退批量
+    assert ws.sent == []  # 整句按空丢弃
+
+
 def test_stream_without_tracker_is_aborted_and_batch_used():
     async def scenario():
         queue: asyncio.Queue = asyncio.Queue(maxsize=1)

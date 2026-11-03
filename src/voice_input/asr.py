@@ -94,7 +94,10 @@ class OpenAICompatibleAsr:
 
 def _default_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
-        timeout=httpx.Timeout(15.0),
+        # 8s 上限：正常批量转写 <1.5s（RTF 0.14），但若音频.cpp 的 live 会话正持有
+        # 单实例模型锁，批量请求会被服务端排队挂住——短超时让消费 worker 快速失败
+        # 恢复，避免拖垮端点队列（实测挂 15s 时 queue full 成片）。
+        timeout=httpx.Timeout(8.0),
         follow_redirects=False,
         trust_env=False,
     )
