@@ -4,6 +4,9 @@ All values come from the environment (the .env file is loaded first by main).  T
 module connects to the waycast hub (WAYCAST_HUB_URL / WAYCAST_HUB_TOKEN) and
 transcribes microphone audio with an OpenAI-compatible ASR service
 (VOICE_IN_ASR_ENDPOINT / VOICE_IN_ASR_MODEL / VOICE_IN_ASR_API_KEY).
+
+Endpoint detection uses the energy VAD unless VOICE_IN_VAD_URL points at an
+audio.cpp server whose silero_vad model then drives endpointing (ADR-0003).
 """
 from __future__ import annotations
 
@@ -23,11 +26,18 @@ VAD_SPEECH_THRESHOLD_KEY: Final = "VOICE_IN_VAD_SPEECH_THRESHOLD"
 VAD_TRAILING_SILENCE_FRAMES_KEY: Final = "VOICE_IN_VAD_TRAILING_SILENCE_FRAMES"
 VAD_MAX_FRAMES_KEY: Final = "VOICE_IN_VAD_MAX_FRAMES"
 VAD_PRE_ROLL_FRAMES_KEY: Final = "VOICE_IN_VAD_PRE_ROLL_FRAMES"
+VAD_URL_KEY: Final = "VOICE_IN_VAD_URL"
+VAD_MODEL_KEY: Final = "VOICE_IN_VAD_MODEL"
+VAD_POLL_MS_KEY: Final = "VOICE_IN_VAD_POLL_MS"
+VAD_MIN_SPEECH_MS_KEY: Final = "VOICE_IN_VAD_MIN_SPEECH_MS"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
 DEFAULT_MAX_FRAMES: Final = 1_500
 DEFAULT_PRE_ROLL_FRAMES: Final = 5
+DEFAULT_VAD_MODEL: Final = "silero-vad"
+DEFAULT_VAD_POLL_MS: Final = 300
+DEFAULT_VAD_MIN_SPEECH_MS: Final = 250
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +53,10 @@ class Settings:
     trailing_silence_frames: int = DEFAULT_TRAILING_SILENCE_FRAMES
     max_frames: int = DEFAULT_MAX_FRAMES
     pre_roll_frames: int = DEFAULT_PRE_ROLL_FRAMES
+    vad_url: str | None = None
+    vad_model: str = DEFAULT_VAD_MODEL
+    vad_poll_ms: int = DEFAULT_VAD_POLL_MS
+    vad_min_speech_ms: int = DEFAULT_VAD_MIN_SPEECH_MS
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +95,20 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         pre_roll_frames=_parse_int(
             source, VAD_PRE_ROLL_FRAMES_KEY, DEFAULT_PRE_ROLL_FRAMES, minimum=0
         ),
+        vad_url=_optional_url(source.get(VAD_URL_KEY)),
+        vad_model=source.get(VAD_MODEL_KEY, "").strip() or DEFAULT_VAD_MODEL,
+        vad_poll_ms=_parse_int(source, VAD_POLL_MS_KEY, DEFAULT_VAD_POLL_MS, minimum=50),
+        vad_min_speech_ms=_parse_int(
+            source, VAD_MIN_SPEECH_MS_KEY, DEFAULT_VAD_MIN_SPEECH_MS, minimum=1
+        ),
     )
+
+
+def _optional_url(value: str | None) -> str | None:
+    url = _optional_text(value)
+    if url is not None and not url.startswith(("http://", "https://")):
+        raise ConfigError(key=VAD_URL_KEY, reason="must be an http:// or https:// URL")
+    return url
 
 
 def _required(source: Mapping[str, str], key: str) -> str:

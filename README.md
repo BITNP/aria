@@ -40,6 +40,7 @@ WAYCAST_HUB_TOKEN=填写核心分配给语音输入的连接令牌
 VOICE_IN_ASR_ENDPOINT=http://127.0.0.1:8080/v1
 VOICE_IN_ASR_MODEL=nemotron-3.5-asr-streaming
 VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
+VOICE_IN_VAD_URL=http://127.0.0.1:8080
 ```
 
 可选配置项：
@@ -47,11 +48,29 @@ VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 | 配置项 | 用途 |
 | --- | --- |
 | VOICE_IN_DEVICE | 指定麦克风设备名称；不填用系统默认输入设备 |
-| VOICE_IN_VAD_SPEECH_THRESHOLD | VAD 语音判定能量阈值（默认 300） |
+| VOICE_IN_VAD_URL | audio.cpp 服务地址（如 `http://127.0.0.1:8080`）；填写后用 Silero VAD 做端点检测（ADR-0003），不填用能量 VAD |
+| VOICE_IN_VAD_MODEL | audio.cpp 上的 VAD 模型 id（默认 `silero-vad`） |
+| VOICE_IN_VAD_POLL_MS | Silero 分段轮询间隔毫秒（默认 300） |
+| VOICE_IN_VAD_MIN_SPEECH_MS | 短于此长度的分段视为噪声丢弃（默认 250） |
+| VOICE_IN_VAD_SPEECH_THRESHOLD | VAD 语音判定能量阈值（默认 300；能量 VAD 与降级路径使用） |
 | VOICE_IN_VAD_TRAILING_SILENCE_FRAMES | 判定一句结束所需的连续静音帧数（默认 20） |
 | VOICE_IN_VAD_MAX_FRAMES | 单段语音最大帧数（默认 1500） |
-| VOICE_IN_VAD_PRE_ROLL_FRAMES | 语音起始前保留的前摇帧数（默认 5） |
+| VOICE_IN_VAD_PRE_ROLL_FRAMES | 语音起始前保留的前摇帧数（默认 5；能量 VAD 与降级路径使用） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
+
+## 端点检测（VAD）
+
+端点检测分两层（ADR-0003）：
+
+- **Silero VAD（首选）**：`VOICE_IN_VAD_URL` 指向 audio.cpp 服务时启用。采集缓冲每
+  `VOICE_IN_VAD_POLL_MS` 送一次 `POST /v1/tasks/run`（WAV base64，补齐到 512 样本的
+  整窗），得到语音分段；缓冲尾音超出最后分段末尾达到尾静音时长即判一句结束。低音量
+  语音不再被能量阈值截断。
+- **能量 VAD（兜底）**：默认路径；Silero 服务连续轮询失败后**永久降级**到它（日志
+  warning），audio.cpp 挂掉不影响采集链路。恢复 Silero 需重启本模块。
+
+两种路径共用 `VOICE_IN_VAD_TRAILING_SILENCE_FRAMES`（句尾静音）与
+`VOICE_IN_VAD_MAX_FRAMES`（单句上限）语义；每个端点仍是一个 waycast input 帧。
 
 ## 启动
 

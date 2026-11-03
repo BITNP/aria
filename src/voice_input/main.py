@@ -29,12 +29,13 @@ from voice_input.asr import OpenAICompatibleAsr
 from voice_input.capture import PortAudioMic
 from voice_input.config import load_settings
 from voice_input.hub_client import MODULE_NAME, HubConnectionError, InputClient
+from voice_input.silero_vad import SileroEndpointer, SileroVadClient
 from voice_input.speaker import (
     SpeakerIdentifier,
     build_speaker_identifier,
     disabled_status,
 )
-from voice_input.vad import EndpointDetector
+from voice_input.vad import EndpointDetector, Endpointer, EnergyEndpointer
 
 LOGGER = logging.getLogger(__name__)
 
@@ -94,15 +95,41 @@ async def _recognize_and_send(
             queue.task_done()
 
 
+def build_endpointer(settings: Any) -> Endpointer:
+    """Model-backed endpointer when VOICE_IN_VAD_URL is set, else the energy VAD.
+
+    The Silero endpointer degrades to the energy detector internally if the
+    audio.cpp service keeps failing (ADR-0003).
+    """
+    energy = EnergyEndpointer(
+        EndpointDetector(
+            threshold=settings.speech_threshold,
+            trailing_silence_frames=settings.trailing_silence_frames,
+            max_frames=settings.max_frames,
+            pre_roll_frames=settings.pre_roll_frames,
+        )
+    )
+    if settings.vad_url is None:
+        return energy
+    LOGGER.info("silero VAD enabled: %s model=%s", settings.vad_url, settings.vad_model)
+    return SileroEndpointer(
+        SileroVadClient(settings.vad_url, settings.vad_model),
+        fallback=energy,
+        poll_s=settings.vad_poll_ms / 1000,
+        min_speech_ms=settings.vad_min_speech_ms,
+        trailing_silence_frames=settings.trailing_silence_frames,
+        max_frames=settings.max_frames,
+    )
+
+
 async def _collect(
     mic: PortAudioMic,
     enhancer: Any | None,
-    vad: EndpointDetector,
+    vad: Endpointer,
     queue: asyncio.Queue[tuple[bytes, int]],
 ) -> None:
     """Read mic blocks, run endpoint detection, and push complete utterances to the queue."""
     timestamp = 0
-    speech_ms = 0
     await mic.open()
     try:
         while True:
@@ -111,17 +138,13 @@ async def _collect(
                 break
             frames = await enhancer.push_async(block) if enhancer is not None else (block,)
             for frame in frames:
-                speech = vad.is_speech(frame)
-                if speech:
-                    speech_ms += 20
-                endpoint = vad.push(frame, timestamp, speech=speech)
+                segment = await vad.feed(frame, timestamp)
                 timestamp = (timestamp + 320) % (1 << 32)
-                if endpoint is not None:
+                if segment is not None:
                     try:
-                        queue.put_nowait((endpoint.pcm16le, speech_ms))
+                        queue.put_nowait((segment.pcm16le, segment.duration_ms))
                     except asyncio.QueueFull:
                         LOGGER.error("endpoint queue full; dropping utterance")
-                    speech_ms = 0
     finally:
         await mic.aclose()
 
@@ -147,12 +170,7 @@ async def _run_with_hub(settings: Any) -> None:
         )
         queue: asyncio.Queue[tuple[bytes, int]] = asyncio.Queue(maxsize=ENDPOINT_QUEUE_SIZE)
         mic = PortAudioMic(device=settings.device)
-        vad = EndpointDetector(
-            threshold=settings.speech_threshold,
-            trailing_silence_frames=settings.trailing_silence_frames,
-            max_frames=settings.max_frames,
-            pre_roll_frames=settings.pre_roll_frames,
-        )
+        vad = build_endpointer(settings)
         enhancer = None  # optional zipenhancer wiring lands here (module-internal)
         try:
             async with asyncio.TaskGroup() as tasks:
@@ -160,6 +178,7 @@ async def _run_with_hub(settings: Any) -> None:
                 tasks.create_task(_recognize_and_send(ws, asr, speaker, queue))
         finally:
             await asr.aclose()
+            await vad.aclose()
 
 
 async def run() -> None:

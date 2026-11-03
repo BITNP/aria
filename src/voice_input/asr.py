@@ -12,14 +12,12 @@ from __future__ import annotations
 
 import json
 import math
-import wave
 from dataclasses import dataclass
-from io import BytesIO
 from typing import cast
 
 import httpx
 
-from voice_input.vad import SAMPLE_RATE_HZ
+from voice_input.vad import wav_bytes as _wav_bytes
 
 MAX_RESPONSE_BYTES = 65_536
 
@@ -91,16 +89,6 @@ def _default_client() -> httpx.AsyncClient:
         follow_redirects=False,
         trust_env=False,
     )
-
-
-def _wav_bytes(pcm16le: bytes) -> bytes:
-    buffer = BytesIO()
-    with wave.open(buffer, "wb") as output:
-        output.setnchannels(1)
-        output.setsampwidth(2)
-        output.setframerate(SAMPLE_RATE_HZ)
-        output.writeframes(pcm16le)
-    return buffer.getvalue()
 
 
 def _parse_recognition(value: object) -> Recognition:

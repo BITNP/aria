@@ -2,7 +2,8 @@
 
 This is a pure energy-based fallback VAD with trailing-silence endpointing and a hard
 frame cap.  It intentionally stays free of model dependencies so the pipeline can run
-headless in tests; a model-backed VAD may be added behind the same push() interface.
+headless in tests; the model-backed endpointer (``silero_vad``) shares the async
+``feed()`` surface defined here.
 
 A segment starts at the first speech frame (plus any preroll) and ends after
 trailing_silence_frames consecutive non-speech frames or when max_frames is reached.
@@ -11,9 +12,11 @@ every emitted endpoint becomes one waycast input frame (ADR-0011).
 """
 from __future__ import annotations
 
+import wave
 from collections import deque
 from dataclasses import dataclass
-from typing import Final
+from io import BytesIO
+from typing import Final, Protocol
 
 SAMPLE_RATE_HZ: Final = 16_000
 FRAME_SAMPLES: Final = 320  # 20 ms at 16 kHz
@@ -25,6 +28,26 @@ class SpeechEndpoint:
 
     pcm16le: bytes
     start_sample: int
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechSegment:
+    """One completed utterance with its speech duration: what the capture loop queues."""
+
+    pcm16le: bytes
+    duration_ms: int
+
+
+class Endpointer(Protocol):
+    """Async endpointing surface used by the capture loop.
+
+    ``feed`` takes one 20 ms frame plus its sample timestamp and returns the
+    completed utterance when a turn ends, else None.
+    """
+
+    async def feed(self, frame: bytes, sample: int) -> SpeechSegment | None: ...
+
+    async def aclose(self) -> None: ...
 
 
 class EndpointDetector:
@@ -105,10 +128,51 @@ def _mean_energy(frame: bytes) -> int:
     return sum(abs(sample) for sample in samples) // len(samples)
 
 
+class EnergyEndpointer:
+    """Async ``feed()`` adapter over the energy detector (Endpointer surface).
+
+    Keeps counting frames flagged as speech so ``duration_ms`` matches the
+    historical speech-only accounting of the capture loop (speaker
+    identification gates on it).
+    """
+
+    def __init__(self, detector: EndpointDetector) -> None:
+        self._detector = detector
+        self._speech_ms = 0
+
+    async def feed(self, frame: bytes, sample: int) -> SpeechSegment | None:
+        speech = self._detector.is_speech(frame)
+        if speech:
+            self._speech_ms += FRAME_SAMPLES * 1000 // SAMPLE_RATE_HZ
+        endpoint = self._detector.push(frame, sample, speech=speech)
+        if endpoint is None:
+            return None
+        duration_ms, self._speech_ms = self._speech_ms, 0
+        return SpeechSegment(pcm16le=endpoint.pcm16le, duration_ms=duration_ms)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def wav_bytes(pcm16le: bytes) -> bytes:
+    """Wrap raw PCM16 mono bytes into an in-memory 16 kHz WAV container."""
+    buffer = BytesIO()
+    with wave.open(buffer, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(SAMPLE_RATE_HZ)
+        output.writeframes(pcm16le)
+    return buffer.getvalue()
+
+
 __all__ = [
     "SpeechEndpoint",
+    "SpeechSegment",
     "EndpointDetector",
+    "EnergyEndpointer",
+    "Endpointer",
     "SAMPLE_RATE_HZ",
     "FRAME_SAMPLES",
     "FRAME_BYTES",
+    "wav_bytes",
 ]

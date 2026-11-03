@@ -55,3 +55,31 @@ def test_optional_fields():
     s = load_settings(env)
     assert s.asr_api_key == "k"
     assert s.device == "mic0"
+
+
+def test_vad_defaults_are_energy():
+    s = load_settings(dict(VALID))
+    assert s.vad_url is None
+    assert s.vad_model == "silero-vad"
+    assert s.vad_poll_ms == 300
+    assert s.vad_min_speech_ms == 250
+
+
+def test_vad_silero_overrides():
+    env = dict(VALID)
+    env["VOICE_IN_VAD_URL"] = "http://127.0.0.1:8080"
+    env["VOICE_IN_VAD_MODEL"] = "my-vad"
+    env["VOICE_IN_VAD_POLL_MS"] = "150"
+    env["VOICE_IN_VAD_MIN_SPEECH_MS"] = "400"
+    s = load_settings(env)
+    assert s.vad_url == "http://127.0.0.1:8080"
+    assert s.vad_model == "my-vad"
+    assert s.vad_poll_ms == 150
+    assert s.vad_min_speech_ms == 400
+
+
+def test_vad_url_must_be_http():
+    env = dict(VALID)
+    env["VOICE_IN_VAD_URL"] = "ws://127.0.0.1:8080"
+    with pytest.raises(ConfigError):
+        load_settings(env)
