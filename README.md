@@ -21,7 +21,7 @@
 
 - Python 3.12+ 与 uv（https://docs.astral.sh/uv/ ），Linux 下需要 PortAudio 运行库。
 - 已启动且可达的 waycast hub（例如 ws://127.0.0.1:8000 ），以及分配给语音输入的连接令牌。
-- 一个 OpenAI 兼容的 ASR 服务（地址 + 模型名 + 可选 API Key）。
+- 一个 OpenAI 兼容的 ASR 服务（地址 + 模型名 + 可选 API Key）。本机部署为 audio.cpp（`http://127.0.0.1:8080`，模型 `nemotron-3.5-asr-streaming`，与 presenter 的 TTS 共用同一服务；本地服务无需密钥）。
 - 说话人识别模型随包分发在 `src/voice_input/models/`（组内导出的 CAM++ ONNX，约 30 MB，已随仓库提交，不读环境变量）；模型缺失或加载失败时模块自动降级为无 ID 模式，其余功能不受影响。
 
 ## 安装与配置
@@ -37,9 +37,9 @@ uv sync --locked
 ```dotenv
 WAYCAST_HUB_URL=ws://127.0.0.1:8000
 WAYCAST_HUB_TOKEN=填写核心分配给语音输入的连接令牌
-VOICE_IN_ASR_ENDPOINT=https://asr.example.test/v1
-VOICE_IN_ASR_MODEL=填写语音识别模型名称
-VOICE_IN_ASR_API_KEY=填写语音识别服务的API密钥
+VOICE_IN_ASR_ENDPOINT=http://127.0.0.1:8080/v1
+VOICE_IN_ASR_MODEL=nemotron-3.5-asr-streaming
+VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 ```
 
 可选配置项：
