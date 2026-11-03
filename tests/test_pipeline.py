@@ -111,3 +111,32 @@ def test_empty_transcript_is_dropped():
         except asyncio.CancelledError:
             pass
         assert ws.sent == []
+
+
+def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
+    """Hub drops surface as ExceptionGroup; the reconnect loop must survive them."""
+    from voice_input import main as main_module
+
+    attempts: list[int] = []
+
+    async def flaky(settings: object) -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ExceptionGroup("dropped", [ConnectionError("1012 service restart")])
+        raise ValueError("non-reconnectable failures still propagate")
+
+    async def scenario():
+        from voice_input.main import run
+
+        await run()
+
+    monkeypatch.setattr(main_module, "load_settings", lambda *a: object())
+    monkeypatch.setattr(main_module, "_run_with_hub", flaky)
+    monkeypatch.setattr(main_module, "HUB_RECONNECT_DELAY_SECONDS", 0.0)
+    try:
+        asyncio.run(scenario())
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("the non-reconnectable failure must propagate")
+    assert len(attempts) == 2  # reconnected after the wrapped connection error

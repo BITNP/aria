@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
@@ -181,13 +181,29 @@ async def _run_with_hub(settings: Any) -> None:
             await vad.aclose()
 
 
+RECONNECTABLE_ERRORS: tuple[type[BaseException], ...] = (HubConnectionError, ConnectionError, OSError)
+
+
+def _reconnectable(exc: BaseException) -> bool:
+    """True when every exception (TaskGroup wraps child failures in groups) is reconnectable."""
+    if isinstance(exc, BaseExceptionGroup):
+        inner = cast("tuple[BaseException, ...]", exc.exceptions)
+        return bool(inner) and all(_reconnectable(item) for item in inner)
+    return isinstance(exc, RECONNECTABLE_ERRORS)
+
+
 async def run() -> None:
     """Entry loop: connect to the hub with reconnection until interrupted."""
     settings = load_settings()
     while True:
         try:
             await _run_with_hub(settings)
-        except (HubConnectionError, ConnectionError, OSError) as exc:
+        except BaseException as exc:  # noqa: BLE001 - filter, don't swallow
+            # A dropped hub surfaces wrapped: TaskGroup raises the read/send
+            # failures as an ExceptionGroup, which except-clauses on the
+            # wrapped types never match.
+            if not _reconnectable(exc):
+                raise
             LOGGER.warning("hub connection failed: %s", exc)
         await asyncio.sleep(HUB_RECONNECT_DELAY_SECONDS)
 
