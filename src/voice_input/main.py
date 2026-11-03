@@ -1,10 +1,11 @@
 """Voice input module entry point.
 
-Pipeline: microphone capture -> endpoint detection (VAD) -> ASR transcription ->
-speaker identification (ADR-0002) -> waycast input frame.  Each detected
-utterance becomes exactly one input frame with no partial/final marking and no
-turn-taking involvement (ADR-0011): the module decides only when an utterance
-is complete, the core decides everything else.
+Pipeline: microphone capture -> speech enhancement (GTCRN, ADR-0006) -> endpoint
+detection (VAD) -> ASR transcription -> speaker identification (ADR-0002) ->
+waycast input frame.  Each detected utterance becomes exactly one input frame
+with no partial/final marking and no turn-taking involvement (ADR-0011): the
+module decides only when an utterance is complete, the core decides everything
+else.
 
 Identified speakers travel into the Agent as a content prefix
 (``【说话人spk_N】文本``) while ``stable_prefix`` stays pure ASR text; when the
@@ -28,6 +29,7 @@ from dotenv import load_dotenv
 from voice_input.asr import OpenAICompatibleAsr
 from voice_input.capture import PortAudioMic
 from voice_input.config import load_settings
+from voice_input.denoise import Enhancer, build_enhancer
 from voice_input.hub_client import MODULE_NAME, HubConnectionError, InputClient
 from voice_input.live_asr import LiveAsrTracker, LiveTranscriptStream, live_url_for
 from voice_input.silero_vad import SileroEndpointer, SileroVadClient
@@ -151,13 +153,16 @@ def build_endpointer(settings: Any) -> Endpointer:
 
 async def _collect(
     mic: PortAudioMic,
-    enhancer: Any | None,
+    enhancer: Enhancer | None,
     vad: Endpointer,
     queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"],
     live: LiveAsrTracker | None = None,
 ) -> None:
     """Read mic blocks, run endpoint detection, and push complete utterances to the queue.
 
+    With an enhancer (GTCRN, ADR-0006) every block is replaced by the enhanced
+    20 ms frames it completes before endpointing: VAD, live ASR and the queued
+    endpoint audio all see the cleaned signal.
     With a live ASR tracker, every frame also feeds the per-utterance streaming
     session (started when the VAD opens an utterance); the endpoint's queue item
     carries that session so the worker can collect the transcript that has been
@@ -191,9 +196,13 @@ async def _collect(
 async def _run_with_hub(settings: Any) -> None:
     """One hub connection lifetime: admit, then run capture + ASR until the connection drops."""
     speaker = build_speaker_identifier()
+    enhancer = build_enhancer(settings)
 
     def status_provider() -> dict[str, object]:
-        return speaker.status() if speaker is not None else disabled_status()
+        base = speaker.status() if speaker is not None else disabled_status()
+        base["denoise_enabled"] = enhancer is not None and enhancer.model_active
+        base["denoise_model_revision"] = enhancer.model_revision if enhancer is not None else None
+        return base
 
     async with InputClient(
         hub_url=settings.hub_url,
@@ -213,7 +222,6 @@ async def _run_with_hub(settings: Any) -> None:
         mic = PortAudioMic(device=settings.device)
         vad = build_endpointer(settings)
         live = build_live_asr(settings)
-        enhancer = None  # optional zipenhancer wiring lands here (module-internal)
         try:
             async with asyncio.TaskGroup() as tasks:
                 tasks.create_task(_collect(mic, enhancer, vad, queue, live))
@@ -223,6 +231,8 @@ async def _run_with_hub(settings: Any) -> None:
                 await live.aclose()
             await asr.aclose()
             await vad.aclose()
+            if enhancer is not None:
+                await enhancer.aclose()
 
 
 def build_live_asr(settings: Any) -> LiveAsrTracker | None:

@@ -5,6 +5,9 @@
 ## 职责边界
 
 - **采集**：持续从默认或指定麦克风采集 16 kHz 单声道 PCM16 音频块。
+- **降噪（语音增强）**：采集后先用随包分发的 GTCRN 流式模型逐帧降噪（ADR-0006），
+  VAD、ASR 与说话人识别一律消费降噪后的音频；`VOICE_IN_DENOISE=0` 或模型不可用时
+  直接使用原始麦克风音频。
 - **端点检测（VAD）**：识别一段语音的起止（静音分段），把一段语音聚合成一个端点。
 - **ASR**：调用 OpenAI 兼容的语音识别服务，把端点音频转成文本。默认走**真流式
   live 路径**（`POST /v1/audio/transcriptions/live`）：语音在途时边采集边上传，
@@ -27,6 +30,7 @@
 - 已启动且可达的 waycast hub（例如 ws://127.0.0.1:8000 ），以及分配给语音输入的连接令牌。
 - 一个 OpenAI 兼容的 ASR 服务（地址 + 模型名 + 可选 API Key）。本机部署为 audio.cpp（`http://127.0.0.1:8080`，模型 `nemotron-3.5-asr-streaming`，与 presenter 的 TTS 共用同一服务；本地服务无需密钥）。
 - 说话人识别模型随包分发在 `src/voice_input/models/`（组内导出的 CAM++ ONNX，约 30 MB，已随仓库提交，不读环境变量）；模型缺失或加载失败时模块自动降级为无 ID 模式，其余功能不受影响。
+- GTCRN 降噪模型同样随包分发在 `src/voice_input/models/`（`gtcrn_simple.onnx`，约 523 KB，来源与校验和见下文「降噪」一节）；缺失或加载失败时自动不降噪，其余功能不受影响。
 
 ## 安装与配置
 
@@ -67,7 +71,32 @@ VOICE_IN_VAD_URL=http://127.0.0.1:8080
 | VOICE_IN_ASR_LIVE | 真流式 ASR 路径开关（默认开；设 `0` 关闭，全部走批量转写） |
 | VOICE_IN_ASR_LIVE_TIMEOUT_MS | 端点后等待流式最终文本的毫秒数（默认 10000；超时按失败回退批量） |
 | VOICE_IN_ASR_LIVE_MAX_FAILURES | 连续失败多少次后永久关闭流式路径（默认 3） |
+| VOICE_IN_DENOISE | GTCRN 降噪开关（默认开；设 `0` 关闭，直接用原始麦克风音频，ADR-0006） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
+
+## 降噪（GTCRN，ADR-0006）
+
+采集与端点检测之间是**进程内流式降噪**（`VOICE_IN_DENOISE`，默认开）：每个
+20ms 麦克风块经 GTCRN 流式模型增强后仍按 20ms 帧交付，VAD、live/批量 ASR 与
+说话人识别消费的都是降噪后音频。
+
+- **模型**：GTCRN（ICASSP 2024，48.2K 参数 / 33.0 MMACs/s，MIT）的官方流式
+  ONNX 导出，随包分发 `src/voice_input/models/gtcrn_simple.onnx`（535,638
+  字节，sha256 `e77603ac0c23dac3227dd2d7135b3a585cbee2679048aecfa886657d3ae1b534`；
+  来源 [Xiaobin-Rong/gtcrn](https://github.com/Xiaobin-Rong/gtcrn) 的
+  `stream/onnx_models/`，经
+  [sherpa-onnx speech-enhancement-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models)
+  注入元数据）。16 kHz / 512 窗 / 256 hop / sqrt-Hann，宿主侧流式
+  STFT/ISTFT 按 sherpa-onnx 语义复刻。
+- **延迟**：模型保持 512 样本（32ms）加帧对齐缓冲，端到端约 40–70ms；出文本
+  时刻仍由端点检测决定（ADR-0005）。实测 RTF 0.18（12 核 x86，单线程）。
+- **降级与旁路**：模型缺失/加载失败 → 不降噪照常运行；推理连续 3 次失败 →
+  本连接永久旁路原始音频（日志 warning，重连或重启恢复）；两者的管道行为与
+  `VOICE_IN_DENOISE=0` 完全一致。
+- **音频语义**：GTCRN 会压制「不像语音」的声音（提示音、哼唱等），非语音音频
+  更难触发输入，属预期行为。
+- 对照实验：官方带噪 wav 可通过 `VOICE_IN_GTCRN_WAV=<16kHz 单声道 wav>` 运行
+  opt-in 测试（默认跳过）。
 
 ## 端点检测（VAD）
 
@@ -133,7 +162,7 @@ uv run --locked voice-input
 - 命中 ID 时 input `content = 【说话人spk_N】 + ASR文本`，`metadata.stable_prefix` 保持纯 ASR 文本。
 - 身份仅用于个性化（称呼、偏好），不构成任何鉴权 / 考勤 / 授权依据。
 - 模型加载失败 → 降级无 ID 模式：文本照常发送（不带前缀），启动日志告警。
-- 模块广告 status 能力（waycast A15/A19），状态工具可查询 `{speaker_enabled, model_revision, known_speaker_count, onnx_provider}`。
+- 模块广告 status 能力（waycast A15/A19），状态工具可查询 `{speaker_enabled, model_revision, known_speaker_count, onnx_provider, denoise_enabled, denoise_model_revision}`。
 
 ## 开发
 
@@ -147,6 +176,6 @@ uv run --locked basedpyright
 
 ## 相关链接
 
-- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
+- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测、0005 真流式 ASR、0006 进程内 GTCRN 降噪）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
 - 核心仓库：[waycast](../waycast/)，契约文档见 ADR-0008（waycast/docs/adr/0008-module-network-protocol.md）、ADR-0011（waycast/docs/adr/0011-agent-decides-turn-taking.md）。
 - 旧语音输入实现（只读参考，不复用）：[bitnp-raspberrygirl-vtuber-mic](../bitnp-raspberrygirl-vtuber-mic/)。

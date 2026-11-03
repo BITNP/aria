@@ -35,6 +35,7 @@ packages = ["src/voice_input"]
 include = [
     "src/voice_input/models/campp.onnx",
     "src/voice_input/models/campp.onnx.data",
+    "src/voice_input/models/gtcrn_simple.onnx",
 ]
 
 [tool.pytest.ini_options]

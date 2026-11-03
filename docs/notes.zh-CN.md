@@ -20,3 +20,28 @@
 - 依赖：新增 numpy、onnxruntime（正式依赖，uv.lock 锁定）；补 onnxruntime 最小类型桩。
 - 测试三层：T1 假 embedder 聚类单测（离线默认跑）；T2 真实模型闭环（同音频同 ID / 异音频异 ID / 短端点补窗，模型缺省跳过）；官方 golden fixture parity 为 opt-in（`MIC_CAMPP_OFFICIAL_GOLDEN=1`）。
 - 验证：pytest 69 用例通过（1 个 opt-in 跳过），ruff check 通过，basedpyright strict 0 错误；真实模型嵌入 192 维、单位范数、同音频余弦 1.0、440/660Hz 余弦 ≈ 0.897（< 0.90 铸新）。
+
+## 2026-11-03 进程内 GTCRN 流式降噪（ADR-0006）
+
+- 选型（在线核实）：audio.cpp 虽内置 GTCRN（builtin_audio_utils/s2s）但任务路
+  为整段请求、状态逐请求清零且无 PCM 流式会话，逐帧不可行；sherpa-onnx
+  OnlineSpeechDenoiser 依赖过重；选进程内 onnxruntime 直跑官方流式导出
+  （Xiaobin-Rong/gtcrn，MIT；模型为 sherpa-onnx release
+  `speech-enhancement-models/gtcrn_simple.onnx`，535,638 字节，sha256
+  e77603ac0c23dac3227dd2d7135b3a585cbee2679048aecfa886657d3ae1b534，与官方
+  checksum.txt 一致，入库 `src/voice_input/models/`）。
+- 实现：`denoise.py` 宿主侧流式 STFT/ISTFT（512 窗/256 hop/sqrt-Hann，
+  rfft/irfft 与 sherpa `online-speech-denoiser-stft-impl.h` 语义等价，首 hop
+  预热不出样本）+ 三缓存逐帧回接 + 320 样本帧对齐输出（LCM 1280，稳态 4 进
+  4 出）；推理走 `asyncio.to_thread` 护采集泵；图签名与元数据加载时严格校验。
+- 降级语义：加载失败不降噪（build 返回 None）；单 hop 失败原始直通；连续 3 次
+  永久旁路本连接；`VOICE_IN_DENOISE=0` 整体关闭（默认开）；status 新增
+  denoise_enabled/denoise_model_revision。
+- 实测（12 核 x86，单线程 ONNX CPU）：纯计算 RTF 0.178（3.55ms/帧）、含线程
+  切换 0.218（4.35ms/帧）；官方带噪 wav 上非语音窗 RMS 显著衰减、语音窗保留。
+  T2 断言：平稳噪声衰减至 ≤15%（实测 2%）、语音谐波串保留 ≥60%（实测 91%）；
+  纯正弦被压至 1.2%（GTCRN 对非语音的预期行为，已写入 README）。
+- 恒等会话测试：对称 sqrt-Hann WOLA 固有纹波实测 ≤18 LSB（模型导出同窗），
+  测试容差 64 LSB；样本守恒 =（hops−1 预热）×256 下取整到 320 帧。
+- 验证：pytest 117 通过（2 个 opt-in 跳过），ruff check 通过，basedpyright
+  strict 0 错误（typings/onnxruntime 桩补 get_modelmeta）。

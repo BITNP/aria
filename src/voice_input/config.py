@@ -10,6 +10,10 @@ audio.cpp server whose silero_vad model then drives endpointing (ADR-0003).
 Transcription prefers the streaming live route on the same ASR server and falls
 back to the batch route per utterance on failure (ADR-0005); VOICE_IN_ASR_LIVE=0
 disables the live path outright.
+
+In-process GTCRN speech enhancement runs between capture and endpointing by
+default (ADR-0006); VOICE_IN_DENOISE=0 disables it and the pipeline forwards
+raw microphone audio.
 """
 from __future__ import annotations
 
@@ -36,6 +40,7 @@ VAD_MIN_SPEECH_MS_KEY: Final = "VOICE_IN_VAD_MIN_SPEECH_MS"
 ASR_LIVE_KEY: Final = "VOICE_IN_ASR_LIVE"
 ASR_LIVE_TIMEOUT_MS_KEY: Final = "VOICE_IN_ASR_LIVE_TIMEOUT_MS"
 ASR_LIVE_MAX_FAILURES_KEY: Final = "VOICE_IN_ASR_LIVE_MAX_FAILURES"
+DENOISE_KEY: Final = "VOICE_IN_DENOISE"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
@@ -70,6 +75,7 @@ class Settings:
     asr_live: bool = True
     asr_live_timeout_ms: int = DEFAULT_ASR_LIVE_TIMEOUT_MS
     asr_live_max_failures: int = DEFAULT_ASR_LIVE_MAX_FAILURES
+    denoise: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +127,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         asr_live_max_failures=_parse_int(
             source, ASR_LIVE_MAX_FAILURES_KEY, DEFAULT_ASR_LIVE_MAX_FAILURES, minimum=1
         ),
+        denoise=_parse_bool(source, DENOISE_KEY, default=True),
     )
 
 

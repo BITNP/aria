@@ -83,3 +83,9 @@ def test_vad_url_must_be_http():
     env["VOICE_IN_VAD_URL"] = "ws://127.0.0.1:8080"
     with pytest.raises(ConfigError):
         load_settings(env)
+
+
+def test_denoise_defaults_on_and_overridable():
+    assert load_settings(dict(VALID)).denoise is True
+    assert load_settings({**VALID, "VOICE_IN_DENOISE": "0"}).denoise is False
+    assert load_settings({**VALID, "VOICE_IN_DENOISE": "on"}).denoise is True

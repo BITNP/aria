@@ -16,6 +16,21 @@
 - **批量转写 / batch 回退**：端点音频整段上传的 `POST /v1/audio/transcriptions` 路径；流式失败、超时或服务端拒绝流式时按端点回退到它，`VOICE_IN_ASR_LIVE=0` 时作为唯一路径。
 - **流式路径永久关闭 / live path disabled**：连续 `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败（或收到不支持信号）后本进程不再尝试流式，全部走批量；重启恢复。
 
+## 降噪（ADR-0006）
+
+- **降噪 / speech enhancement**：采集与端点检测之间的进程内 GTCRN 流式语音增
+  强；VAD、live/批量 ASR 与说话人识别一律消费降噪后音频。`VOICE_IN_DENOISE=0`、
+  模型不可用或被旁路时，管道消费原始麦克风音频。
+- **增强器 / enhancer**：挂在采集泵上的降噪组件（`denoise.GtcrnEnhancer`），
+  输入输出都是 20ms/320 样本帧；接口为 `push_async(block) -> 若干帧`。
+- **保持 / hold-back**：增强器把音频向后压住再出帧的固有延迟（模型 512 样本
+  ≈ 32ms 加帧对齐缓冲）；样本不丢弃，只是晚些交付。
+- **预热 hop / priming hop**：流式前端处理的第一个 256 样本帧，只填充分析缓
+  冲不产出样本（sherpa-onnx 语义）。
+- **旁路 / bypass**：降噪的降级形态——模型加载失败则整段不降噪（构建期），推
+  理连续 `MAX_ENHANCE_FAILURES` 次失败则原始音频直通帧缓冲（运行期，本连接
+  内永久，重连或重启恢复）；两者管道行为与关闭开关完全一致。
+
 ## 说话人识别（ADR-0002）
 
 - **说话人 ID / speaker ID**：进程内唯一的说话人编号，形如 `spk_1`、`spk_2`（`spk_N` 单调递增）；身份以 `【说话人spk_N】` 前缀随 content 进入 Agent。
