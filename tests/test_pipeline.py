@@ -93,6 +93,8 @@ def test_overlong_transcript_is_dropped_in_consumer():
             pass
         assert ws.sent == []
 
+    asyncio.run(scenario())
+
 
 def test_empty_transcript_is_dropped():
     async def scenario():
