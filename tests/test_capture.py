@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from voice_input.capture import PortAudioMic
 from voice_input.vad import FRAME_BYTES
 
@@ -32,5 +34,49 @@ def test_open_noop_with_injected_reader():
         mic = PortAudioMic(reader=lambda: asyncio.sleep(0) or None)
         await mic.open()  # must not import sounddevice
         await mic.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_open_uses_stream_without_injected_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: bound-method identity made _injected() always True, so
+    open() skipped stream creation and the first read_block asserted."""
+
+    class FakeStream:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+            self.started = False
+            self.stopped = False
+            self.closed = False
+
+        def start(self) -> None:
+            self.started = True
+
+        def read(self, frames: int) -> tuple[bytes, bool]:
+            return b"\x00" * (frames * 2), False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    streams: list[FakeStream] = []
+
+    def factory(**kwargs: object) -> FakeStream:
+        stream = FakeStream(**kwargs)
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr("sounddevice.RawInputStream", factory)
+
+    async def scenario() -> None:
+        mic = PortAudioMic(device="pipewire")
+        await mic.open()
+        assert streams and streams[0].started
+        block = await asyncio.wait_for(mic.read_block(), timeout=2.0)
+        assert block is not None and len(block) == FRAME_BYTES
+        await mic.aclose()
+        assert streams[0].closed
 
     asyncio.run(scenario())

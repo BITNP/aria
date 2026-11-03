@@ -36,6 +36,7 @@ class PortAudioMic(MicReader):
 
     def __init__(self, device: str | None = None, reader: RawBlockReader | None = None) -> None:
         self._device = device
+        self._injected_reader = reader is not None
         self._reader: RawBlockReader = reader if reader is not None else self._sounddevice_read
         self._queue: asyncio.Queue[RawBlock | None] | None = None
         self._task: asyncio.Task[None] | None = None
@@ -60,7 +61,11 @@ class PortAudioMic(MicReader):
         self._task = asyncio.create_task(self._capture_loop())
 
     def _injected(self) -> bool:
-        return self._reader is not self._sounddevice_read
+        # Bound methods compare by value but never by identity (each attribute
+        # access creates a fresh object), so `self._reader is not
+        # self._sounddevice_read` was always True: open() silently no-opped on
+        # the real-device path. The constructor records injection explicitly.
+        return self._injected_reader
 
     async def _sounddevice_read(self) -> RawBlock | None:
         assert self._queue is not None
