@@ -12,14 +12,15 @@ Labeling rules (ADR-0002):
   and are never enrolled;
 - shorter utterances are zero-padded to the ``ID_WINDOW_MS`` window before
   embedding; longer ones are embedded whole;
-- a speaker id is reused only when the best cosine match is >=
-  ``COSINE_REUSE_THRESHOLD`` and the gap to the second-best is > ``AMBIGUITY_GAP``;
+- a speaker id is reused only when the best cosine match is >= the
+  identifier's ``reuse_threshold`` (default ``DEFAULT_REUSE_THRESHOLD``, ADR-0009)
+  and the gap to the second-best is > ``AMBIGUITY_GAP``;
 - a match with all similarities below the threshold (or no known speakers yet)
   mints a new ``spk_N`` id immediately (no probation);
 - an ambiguous match (best-second gap <= ``AMBIGUITY_GAP``) is neither labeled
   nor enrolled and no new id is minted;
 - before merging a window into a speaker's running mean, its cosine to the
-  mean must be >= ``COSINE_REUSE_THRESHOLD`` (anti-pollution); the mean keeps
+  mean must be >= the reuse threshold (anti-pollution); the mean keeps
   at most ``MEAN_MAX_CONTRIBUTIONS`` recent windows.
 
 The identity table resets on process restart (speakers are renumbered from
@@ -49,7 +50,12 @@ LOGGER = logging.getLogger(__name__)
 MIN_SPEECH_MS: Final = 500
 ID_WINDOW_MS: Final = 1_500
 ID_WINDOW_SAMPLES: Final = SAMPLE_RATE_HZ * ID_WINDOW_MS // 1_000
-COSINE_REUSE_THRESHOLD: Final = 0.90
+# Real-speech operating point for CAM++ embeddings (ADR-0009): the official
+# 3D-Speaker CAM++ model card ships thr=0.31 (accessed 2026-11-06), and the
+# bundled model measures same-speaker cross-segment cosines of 0.47–0.84
+# (measured on ref_audio.wav) — the previous 0.90 default was unreachable and
+# minted a fresh speaker for every utterance.
+DEFAULT_REUSE_THRESHOLD: Final = 0.31
 AMBIGUITY_GAP: Final = 0.05
 MEAN_MAX_CONTRIBUTIONS: Final = 64
 MODEL_REVISION: Final = "camplusplus-onnx-v1"
@@ -138,8 +144,13 @@ class CamppEmbedder:
 class SpeakerIdentifier:
     """In-memory 1:N dynamic speaker identification (ADR-0002)."""
 
-    def __init__(self, embedder: Embedder) -> None:
+    def __init__(
+        self, embedder: Embedder, *, reuse_threshold: float = DEFAULT_REUSE_THRESHOLD
+    ) -> None:
+        if not 0.0 < reuse_threshold < 1.0:
+            raise ValueError("reuse_threshold must be between 0 and 1 (exclusive)")
         self._embedder = embedder
+        self._reuse_threshold = reuse_threshold
         self._vectors: dict[str, deque[Embedding]] = {}
         self._next_number = 1
 
@@ -157,7 +168,9 @@ class SpeakerIdentifier:
 
     def _decide(self, vector: Embedding) -> str | None:
         if not self._vectors:
-            return self._mint(vector)
+            decision = self._mint(vector)
+            LOGGER.debug("speaker mint %s (no known speakers yet)", decision)
+            return decision
         matches = sorted(
             (
                 (spk, _cosine(vector, _mean(contributions)))
@@ -168,11 +181,25 @@ class SpeakerIdentifier:
         )
         best_id, best = matches[0]
         second: float | None = matches[1][1] if len(matches) > 1 else None
-        if best < COSINE_REUSE_THRESHOLD:
-            return self._mint(vector)
+        if best < self._reuse_threshold:
+            decision = self._mint(vector)
+            LOGGER.debug(
+                "speaker mint %s (best %s=%.3f < %.3f, %d known)",
+                decision, best_id, best, self._reuse_threshold, len(matches),
+            )
+            return decision
         if second is not None and best - second <= AMBIGUITY_GAP:
+            LOGGER.debug(
+                "speaker ambiguous (best %s=%.3f, second=%.3f, gap <= %.2f)",
+                best_id, best, second, AMBIGUITY_GAP,
+            )
             return None
         self._enroll(best_id, vector)
+        LOGGER.debug(
+            "speaker reuse %s (best=%.3f, second=%s, threshold=%.3f)",
+            best_id, best, f"{second:.3f}" if second is not None else "none",
+            self._reuse_threshold,
+        )
         return best_id
 
     def _mint(self, vector: Embedding) -> str:
@@ -183,7 +210,7 @@ class SpeakerIdentifier:
 
     def _enroll(self, spk: str, vector: Embedding) -> None:
         window = self._vectors.setdefault(spk, deque(maxlen=MEAN_MAX_CONTRIBUTIONS))
-        if window and _cosine(vector, _mean(window)) < COSINE_REUSE_THRESHOLD:
+        if window and _cosine(vector, _mean(window)) < self._reuse_threshold:
             LOGGER.debug("anti-pollution: not merging window into %s", spk)
             return
         window.append(vector)
@@ -203,7 +230,10 @@ def bundled_model_path() -> Path:
 
 
 def build_speaker_identifier(
-    model_path: Path | None = None, *, providers: Sequence[str] | None = None
+    model_path: Path | None = None,
+    *,
+    providers: Sequence[str] | None = None,
+    reuse_threshold: float = DEFAULT_REUSE_THRESHOLD,
 ) -> SpeakerIdentifier | None:
     """Load the bundled model; return None (degraded no-ID mode) on any failure.
 
@@ -219,11 +249,12 @@ def build_speaker_identifier(
         )
         return None
     LOGGER.info(
-        "speaker identification enabled (revision=%s onnx_provider=%s)",
+        "speaker identification enabled (revision=%s onnx_provider=%s reuse_threshold=%.2f)",
         embedder.model_revision,
         embedder.onnx_provider,
+        reuse_threshold,
     )
-    return SpeakerIdentifier(embedder)
+    return SpeakerIdentifier(embedder, reuse_threshold=reuse_threshold)
 
 
 def disabled_status() -> dict[str, object]:
@@ -281,7 +312,7 @@ __all__ = [
     "MIN_SPEECH_MS",
     "ID_WINDOW_MS",
     "ID_WINDOW_SAMPLES",
-    "COSINE_REUSE_THRESHOLD",
+    "DEFAULT_REUSE_THRESHOLD",
     "AMBIGUITY_GAP",
     "MEAN_MAX_CONTRIBUTIONS",
     "MODEL_REVISION",

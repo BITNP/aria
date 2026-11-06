@@ -1,10 +1,13 @@
-"""Real-model closed-loop tests (T2, ADR-0002): same audio -> same id, distinct audio -> new id.
+"""Real-model closed-loop tests (T2, ADR-0002 / ADR-0009): same audio -> same id,
+distinct audio -> new id under an explicitly strict threshold.
 
 These tests exercise the bundled CAM++ ONNX model and are skipped when the
 asset is absent so CI stays green offline.  Inputs are synthetic tones chosen
 empirically: the model is deterministic, so the cosine distances (1.0 for
-identical audio, ~0.897 for the 440/660 Hz pair, below the 0.90 reuse
-threshold) are stable across runs.
+identical audio, ~0.897 for the 440/660 Hz pair) are stable across runs.
+Pure tones are not voiceprints, so the distinct-audio case pins a strict
+threshold (0.95) to test the minting semantics; the shipping default is the
+real-speech operating point (ADR-0009).
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ import pytest
 
 from voice_input.fbank import extract
 from voice_input.speaker import (
+    ID_WINDOW_SAMPLES,
     MODEL_REVISION,
     CamppEmbedder,
     SpeakerIdentifier,
@@ -80,11 +84,39 @@ def test_short_audio_padding_keeps_identity():
 
 
 def test_distinct_audio_mints_new_speaker():
-    # cos(embed(440Hz), embed(660Hz)) ~ 0.897 < 0.90: must mint spk_2.
-    identifier = SpeakerIdentifier(CamppEmbedder(MODEL_PATH))
+    # cos(embed(440Hz), embed(660Hz)) ~ 0.897: minting semantics under a
+    # strict 0.95 threshold (see module docstring for why tones need strictness).
+    identifier = SpeakerIdentifier(CamppEmbedder(MODEL_PATH), reuse_threshold=0.95)
     assert identifier.identify(_tone(440), 600) == "spk_1"
     assert identifier.identify(_tone(660), 600) == "spk_2"
     assert identifier.known_speaker_count == 2
+
+
+@pytest.mark.skipif(
+    not os.environ.get("VOICE_IN_CAMPP_SPEECH_WAV"),
+    reason="set VOICE_IN_CAMPP_SPEECH_WAV to a 16 kHz mono WAV of one continuous speaker",
+)
+def test_same_speaker_disjoint_segments_share_id_at_operating_point():
+    """ADR-0009 regression: two disjoint 1.5 s windows of one real utterance
+    must resolve to a single speaker at the shipping threshold (the 0.90
+    default minted a fresh id for every utterance in the field)."""
+    import wave
+
+    with wave.open(os.environ["VOICE_IN_CAMPP_SPEECH_WAV"]) as reader:
+        assert reader.getframerate() == 16_000 and reader.getnchannels() == 1
+        if reader.getnframes() < int(7.5 * 16_000):
+            pytest.skip("VOICE_IN_CAMPP_SPEECH_WAV must be >= 7.5 s for two disjoint windows")
+
+        def segment(seconds: float) -> bytes:
+            reader.setpos(int(seconds * 16_000))
+            return reader.readframes(ID_WINDOW_SAMPLES)
+
+        first, second = segment(0.5), segment(6.0)
+
+    identifier = SpeakerIdentifier(CamppEmbedder(MODEL_PATH))
+    assert identifier.identify(first, speech_ms=1_500) == "spk_1"
+    assert identifier.identify(second, speech_ms=1_500) == "spk_1"
+    assert identifier.known_speaker_count == 1
 
 
 @pytest.mark.skipif(

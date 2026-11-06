@@ -51,7 +51,9 @@ def test_short_utterance_is_unlabeled_and_not_enrolled():
 
 
 def test_unknown_speaker_mints_monotonic_ids():
-    identifier = _identifier(_unit(0.0), _unit(1.2), _unit(2.0))
+    # 120° apart on the unit circle: every pairwise cosine is -0.5, below the
+    # 0.31 default operating point, so each utterance mints a fresh id.
+    identifier = _identifier(_unit(0.0), _unit(2.094), _unit(4.189))
     assert identifier.identify(b"a", speech_ms=600) == "spk_1"
     assert identifier.identify(b"b", speech_ms=600) == "spk_2"
     assert identifier.identify(b"c", speech_ms=600) == "spk_3"
@@ -67,19 +69,38 @@ def test_same_speaker_reuses_id():
 
 
 def test_distinct_speaker_is_not_reused_below_threshold():
-    # cos(1.2 rad) < 0.90 -> must mint a new id rather than reuse spk_1.
-    identifier = _identifier(_unit(0.0), _unit(1.2))
+    # cos(1.4 rad) ~ 0.170 < 0.31 -> must mint a new id rather than reuse spk_1.
+    identifier = _identifier(_unit(0.0), _unit(1.4))
     assert identifier.identify(b"a", 600) == "spk_1"
     assert identifier.identify(b"b", 600) == "spk_2"
     assert identifier.known_speaker_count == 2
 
 
 def test_boundary_cosine_just_above_threshold_reuses():
-    # cos(0.40 rad) ~ 0.921 >= 0.90 with no second candidate -> reuse spk_1.
-    identifier = _identifier(_unit(0.0), _unit(0.40))
+    # cos(1.21 rad) ~ 0.353 >= 0.31 with no second candidate -> reuse spk_1.
+    identifier = _identifier(_unit(0.0), _unit(1.21))
     assert identifier.identify(b"a", 600) == "spk_1"
     assert identifier.identify(b"b", 600) == "spk_1"
     assert identifier.known_speaker_count == 1
+
+
+def test_boundary_cosine_just_below_threshold_mints():
+    # cos(1.27 rad) ~ 0.296 < 0.31 -> the old 0.90 default made every real
+    # utterance mint; at the 0.31 operating point the boundary must bite here.
+    identifier = _identifier(_unit(0.0), _unit(1.27))
+    assert identifier.identify(b"a", 600) == "spk_1"
+    assert identifier.identify(b"b", 600) == "spk_2"
+
+
+def test_reuse_threshold_is_configurable():
+    # A strict threshold (the old default) rejects cos ~ 0.921; the default
+    # operating point accepts it.
+    strict = SpeakerIdentifier(_FakeEmbedder([_unit(0.0), _unit(0.40)]), reuse_threshold=0.95)
+    assert strict.identify(b"a", 600) == "spk_1"
+    assert strict.identify(b"b", 600) == "spk_2"
+    lenient = _identifier(_unit(0.0), _unit(0.40))
+    assert lenient.identify(b"a", 600) == "spk_1"
+    assert lenient.identify(b"b", 600) == "spk_1"
 
 
 def test_short_endpoint_is_padded_to_window():
@@ -122,7 +143,7 @@ def test_ambiguous_match_is_not_labeled_or_minted():
 
 def test_unambiguous_reuse_when_second_is_far():
     # Seeded mean A=(1,0); a second speaker far away means the reuse decision
-    # has room for the gap: best ~0.98, second ~0.66 > 0.05 apart.
+    # has room for the gap: best 1.00, second ~0.54, far more than 0.05 apart.
     identifier = _identifier(_unit(0.0))
     identifier._vectors["spk_a"] = deque([_unit(0.0)])
     identifier._vectors["spk_b"] = deque([_unit(1.0)])

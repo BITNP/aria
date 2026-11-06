@@ -259,7 +259,7 @@ async def _collect(
 
 async def _run_with_hub(settings: Any) -> None:
     """One hub connection lifetime: admit, then run capture + ASR until the connection drops."""
-    speaker = build_speaker_identifier()
+    speaker = build_speaker_identifier(reuse_threshold=settings.speaker_threshold)
     enhancer = build_enhancer(settings)
 
     def status_provider() -> dict[str, object]:

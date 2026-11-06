@@ -41,6 +41,7 @@ ASR_LIVE_KEY: Final = "VOICE_IN_ASR_LIVE"
 ASR_LIVE_TIMEOUT_MS_KEY: Final = "VOICE_IN_ASR_LIVE_TIMEOUT_MS"
 ASR_LIVE_MAX_FAILURES_KEY: Final = "VOICE_IN_ASR_LIVE_MAX_FAILURES"
 DENOISE_KEY: Final = "VOICE_IN_DENOISE"
+SPEAKER_THRESHOLD_KEY: Final = "VOICE_IN_SPEAKER_THRESHOLD"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
@@ -51,6 +52,7 @@ DEFAULT_VAD_ENGINE: Final = "silero"
 DEFAULT_VAD_THRESHOLD: Final = 0.5
 DEFAULT_ASR_LIVE_TIMEOUT_MS: Final = 10_000
 DEFAULT_ASR_LIVE_MAX_FAILURES: Final = 3
+DEFAULT_SPEAKER_THRESHOLD: Final = 0.31
 
 _TRUE_VALUES: Final = {"1", "true", "yes", "on"}
 _VAD_ENGINES: Final = ("silero", "energy")
@@ -76,6 +78,7 @@ class Settings:
     asr_live_timeout_ms: int = DEFAULT_ASR_LIVE_TIMEOUT_MS
     asr_live_max_failures: int = DEFAULT_ASR_LIVE_MAX_FAILURES
     denoise: bool = True
+    speaker_threshold: float = DEFAULT_SPEAKER_THRESHOLD
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +130,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             source, ASR_LIVE_MAX_FAILURES_KEY, DEFAULT_ASR_LIVE_MAX_FAILURES, minimum=1
         ),
         denoise=_parse_bool(source, DENOISE_KEY, default=True),
+        speaker_threshold=_parse_float(
+            source, SPEAKER_THRESHOLD_KEY, DEFAULT_SPEAKER_THRESHOLD
+        ),
     )
 
 

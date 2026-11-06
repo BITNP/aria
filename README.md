@@ -73,7 +73,8 @@ VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 | VOICE_IN_ASR_LIVE_TIMEOUT_MS | 端点后等待流式最终文本的毫秒数（默认 10000；超时按失败回退批量） |
 | VOICE_IN_ASR_LIVE_MAX_FAILURES | 连续失败多少次后永久关闭流式路径（默认 3） |
 | VOICE_IN_DENOISE | GTCRN 降噪开关（默认开；设 `0` 关闭，直接用原始麦克风音频，ADR-0006） |
-| VOICE_IN_LOG_LEVEL | 本模块日志级别（默认 `INFO`；设 `DEBUG` 输出端点、ASR 转写结果、请求等调试信息） |
+| VOICE_IN_SPEAKER_THRESHOLD | 说话人复用的余弦相似度阈值（默认 0.31，真实语音工作点，ADR-0009；调高更倾向铸新 ID，调低更倾向合并） |
+| VOICE_IN_LOG_LEVEL | 本模块日志级别（默认 `INFO`；设 `DEBUG` 输出端点、ASR 转写结果、说话人判定分数等调试信息） |
 | VOICE_IN_DEPS_LOG_LEVEL | 第三方依赖日志级别（默认 `WARNING`，屏蔽 websockets/httpx/asyncio/onnxruntime 噪音） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
 
@@ -175,7 +176,7 @@ uv run --locked voice-input
 识别在模块进程内**全内存**完成：不做注册、不做 consent、不加密、不持久化（ADR-0002）。每次进程启动后说话人重新从 `spk_1` 编号，配合核心全局记忆（waycast ADR-0005）在自称时建立 ID↔称呼关联。
 
 - 每个 VAD 端点**一次嵌入、一次匹配**：短端点尾补静音到 1.5s 窗，长端点整段送（CAM++ 模型要求 16 kHz / 25ms / 10ms / 80-bin FBank，与模型训练前端一致）。
-- 判定口径：端点 speech ≥ 500ms 才判身份；余弦最近邻 ≥ 0.90 且与次近邻差距 > 0.05 复用 ID；全部 < 0.90 立即铸新 ID（`spk_N` 单调递增）；歧义（次近邻差 ≤ 0.05）本句不标注也不铸新 ID；说话人运行均值最多保留最近 64 窗贡献，并入前余弦校验防污染。
+- 判定口径：端点 speech ≥ 500ms 才判身份；余弦最近邻 ≥ 复用阈值（`VOICE_IN_SPEAKER_THRESHOLD`，默认 0.31，真实语音工作点，ADR-0009）且与次近邻差距 > 0.05 复用 ID；全部低于阈值立即铸新 ID（`spk_N` 单调递增）；歧义（次近邻差 ≤ 0.05）本句不标注也不铸新 ID；说话人运行均值最多保留最近 64 窗贡献，并入前余弦校验防污染。判定分数（best/second）以 DEBUG 日志输出，便于校准阈值。
 - 命中 ID 时 input `content = 【说话人spk_N】 + ASR文本`，`metadata.stable_prefix` 保持纯 ASR 文本。
 - 身份仅用于个性化（称呼、偏好），不构成任何鉴权 / 考勤 / 授权依据。
 - 模型加载失败 → 降级无 ID 模式：文本照常发送（不带前缀），启动日志告警。
@@ -193,6 +194,6 @@ uv run --locked basedpyright
 
 ## 相关链接
 
-- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX、0008 live 空文本不回退批量〔修正 0005 回退语义〕）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
+- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX、0008 live 空文本不回退批量〔修正 0005 回退语义〕、0009 说话人复用阈值 0.31〔修正 0002 阈值〕）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
 - 核心仓库：[waycast](../waycast/)，契约文档见 ADR-0008（waycast/docs/adr/0008-module-network-protocol.md）、ADR-0011（waycast/docs/adr/0011-agent-decides-turn-taking.md）。
 - 旧语音输入实现（只读参考，不复用）：[bitnp-raspberrygirl-vtuber-mic](../bitnp-raspberrygirl-vtuber-mic/)。
