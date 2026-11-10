@@ -58,6 +58,10 @@ class ScriptedModel:
         self.calls += 1
         assert len(chunks) == 1
         self.chunk_lengths.append(len(chunks[0]))
+        # mirror the real SileroVadModel: the ONNX graph only ever sees the
+        # fixed 512-sample window, so a corrupt chunk must fail here too
+        if len(chunks[0]) != 512:
+            raise RuntimeError(f"bad chunk length {len(chunks[0])} (model wants 512)")
         if self.calls <= self._fail_calls:
             raise RuntimeError("injected chunk failure")
         if not self._probs:
@@ -271,19 +275,23 @@ def test_silence_close_keeps_lead_pad_after_previous_end():
 
 def test_hard_cap_close_is_contiguous():
     # mid-speech max_frames cap: the emitted trailing pad is discarded with the
-    # close, so the next segment starts exactly where the capped one ended --
-    # contiguous, no gap, no duplicated speech.
+    # close (clamped at the model's read head), so the next segment starts at
+    # the chunk after the capped one -- contiguous, no gap; at most one pad of
+    # tail overlap when the pad had reached past the read head.
     model = ScriptedModel([0.9] * 20 + [0.05] * 8)
     endpointer = _endpointer(model, max_frames=16)  # 5120-sample cap
     segments, _, _ = _feed(endpointer, _frames(40))
     assert len(segments) == 2
+    assert endpointer.degraded is False
+    assert set(model.chunk_lengths) == {512}  # regression: no corrupt chunks
     first, second = segments
     assert first.duration_ms == 5_120 // 16
     # the resumed stretch hits its own cap at chunk 21 before silence closes it
     assert second.duration_ms == (10_752 - 5_632) // 16
-    # first: floor + [0, min(5120 + 2400, 5760)); second: floor + [5760, min(10752 + 2400, 11520))
+    # first: floor + [0, min(5120 + 2400, 5760)); the discard clamps at the read
+    # head (5632, not 7520); second: floor + [5632, min(10752 + 2400, 11520))
     assert len(first.pcm16le) == (2_400 + 5_760) * 2
-    assert len(second.pcm16le) == (2_400 + 11_520 - 5_760) * 2
+    assert len(second.pcm16le) == (2_400 + 11_520 - 5_632) * 2
 
 
 def test_endpoint_and_snapshot_open_with_silence_floor():

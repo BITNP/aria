@@ -348,8 +348,9 @@ class SileroEndpointer:
             # ADR-0010 boundary policy: a silence close keeps [end, end + pad) in
             # the idle ring so the next onset's lead pad can reach back there (a
             # resume right after min_silence never eats its speech); a mid-speech
-            # hard cap discards exactly the audio it emitted (end + pad), keeping
-            # consecutive segments contiguous without duplicating speech.
+            # hard cap discards the audio it emitted, clamped at the model's read
+            # head (see _discard_before), keeping consecutive segments contiguous
+            # without duplicating speech.
             self._discard_before(end + SPEECH_PAD_SAMPLES if hard_cut else end)
         return segment
 
@@ -372,6 +373,14 @@ class SileroEndpointer:
         return bytes(self._pcm[first : (end - self._pcm_start) * 2])
 
     def _discard_before(self, sample: int) -> None:
+        # Invariant: the buffer head never passes the model's read head.  Audio
+        # past _chunk_pos has not been consumed yet -- _take_chunk slices from
+        # there, and a negative offset there yields corrupt (0-length) chunks
+        # that the ONNX model rejects, silently degrading the connection to the
+        # energy VAD.  ADR-0010's hard-cap close asks for end + pad, which can
+        # overrun the read head by up to one pad; clamping costs at most that
+        # pad of harmless tail overlap in the rare hard-cap re-open.
+        sample = min(sample, self._chunk_pos)
         count = min(max(sample - self._pcm_start, 0), len(self._pcm) // 2)
         if count:
             del self._pcm[: count * 2]
