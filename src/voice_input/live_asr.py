@@ -12,6 +12,13 @@ handle_transcription_live 已核对）：请求体为裸 PCM 分块上传
 httpx 无法在同一条 HTTP/1.1 连接上边发边收（发完请求体才开始读响应），所以这里是
 裸 asyncio 的 HTTP 分块实现：写侧按 chunked 框定推音频，读侧增量解 chunk 并解析
 SSE。写侧在独立任务里进行，喂音频（feed）只入缓冲，绝不因网络背压卡住音频泵。
+
+换代验证（2026-11，httpx2 2.16.0）：httpx2 虽原生支持 SSE（client.sse()）与
+异步生成器请求体，但其请求路径同样是「请求体全部传完才开始读响应」——环回实测
+（服务端每收一个请求块即时回一个 SSE 事件）中 client.sse() 与
+send(request, stream=True) 的响应均挤在上传结束后一次性到达，换过来会让增量文本
+退化成立等完整上传，功能倒退。故本实现保留手写，勿再尝试用 httpx/httpx2 承接
+本路由的全双工流式上传。
 """
 
 from __future__ import annotations
