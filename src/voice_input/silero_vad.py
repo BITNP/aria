@@ -28,7 +28,11 @@ so the official 30 ms pad still cut 26..58 ms into the first syllable);
 ``utterance_audio`` reports ``[speech_start - pad, fed)`` so the live ASR
 session streams exactly the bytes the endpoint will emit (the frames that
 trigger a close may carry up to one chunk of trailing silence the live stream
-never saw -- silence only, which costs the transcript nothing).
+never saw -- silence only, which costs the transcript nothing).  Both emits
+open with a fixed 150 ms digital-silence floor (``with_lead_silence``,
+ADR-0011): the ASR server swallows the first syllable of audio that starts
+without silence on the head, and the floor keeps that impossible on both
+routes.
 
 Failure policy mirrors the other model paths: an inference fault skips that one
 chunk (state survives), ``MAX_VAD_FAILURES`` consecutive faults permanently
@@ -55,6 +59,7 @@ from voice_input.vad import (
     SAMPLE_RATE_HZ,
     Endpointer,
     SpeechSegment,
+    with_lead_silence,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -280,8 +285,11 @@ class SileroEndpointer:
             return self._fallback.utterance_audio()
         if not self._triggered:
             return b""
-        return self._slice(
-            max(self._speech_start - SPEECH_PAD_SAMPLES, self._pcm_start), self._fed
+        return with_lead_silence(
+            self._slice(
+                max(self._speech_start - SPEECH_PAD_SAMPLES, self._pcm_start),
+                self._fed,
+            )
         )
 
     async def aclose(self) -> None:
@@ -322,9 +330,11 @@ class SileroEndpointer:
         segment: SpeechSegment | None = None
         if end - start > self._min_speech_samples:
             segment = SpeechSegment(
-                pcm16le=self._slice(
-                    max(start - SPEECH_PAD_SAMPLES, self._pcm_start),
-                    min(end + SPEECH_PAD_SAMPLES, self._fed),
+                pcm16le=with_lead_silence(
+                    self._slice(
+                        max(start - SPEECH_PAD_SAMPLES, self._pcm_start),
+                        min(end + SPEECH_PAD_SAMPLES, self._fed),
+                    )
                 ),
                 duration_ms=(end - start) // _SAMPLES_PER_MS,
             )

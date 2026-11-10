@@ -22,6 +22,21 @@ from typing import Final, Protocol
 SAMPLE_RATE_HZ: Final = 16_000
 FRAME_SAMPLES: Final = 320  # 20 ms at 16 kHz
 FRAME_BYTES: Final = 640  # 320 int16 samples = 640 bytes
+LEAD_SILENCE_SAMPLES: Final = 2_400  # 150 ms silence floor on every endpoint (ADR-0011)
+_LEAD_SILENCE: Final = bytes(LEAD_SILENCE_SAMPLES * 2)
+
+
+def with_lead_silence(pcm16le: bytes) -> bytes:
+    """Prepend the fixed digital-silence floor to endpoint audio (ADR-0011).
+
+    Measured on the nemotron streaming ASR server: audio that starts speaking
+    at sample 0 loses its first syllable on BOTH routes ('Can you speak
+    English' transcribes as 'You speak English'), while >= 50 ms of leading
+    silence recovers it fully.  The floor guarantees the model always sees a
+    quiet attack; endpoint audio and the live utterance snapshot carry it at
+    the same place, keeping the strict-prefix lockstep invariant.
+    """
+    return _LEAD_SILENCE + pcm16le
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,14 +188,17 @@ class EnergyEndpointer:
         if endpoint is None:
             return None
         duration_ms, self._speech_ms = self._speech_ms, 0
-        return SpeechSegment(pcm16le=endpoint.pcm16le, duration_ms=duration_ms)
+        return SpeechSegment(
+            pcm16le=with_lead_silence(endpoint.pcm16le), duration_ms=duration_ms
+        )
 
     @property
     def utterance_open(self) -> bool:
         return self._detector.collecting
 
     def utterance_audio(self) -> bytes:
-        return self._detector.utterance_audio()
+        audio = self._detector.utterance_audio()
+        return with_lead_silence(audio) if audio else b""
 
     async def aclose(self) -> None:
         return None
@@ -200,6 +218,7 @@ def wav_bytes(pcm16le: bytes) -> bytes:
 __all__ = [
     "FRAME_BYTES",
     "FRAME_SAMPLES",
+    "LEAD_SILENCE_SAMPLES",
     "SAMPLE_RATE_HZ",
     "EndpointDetector",
     "Endpointer",
@@ -207,4 +226,5 @@ __all__ = [
     "SpeechEndpoint",
     "SpeechSegment",
     "wav_bytes",
+    "with_lead_silence",
 ]

@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from voice_input.vad import FRAME_BYTES, FRAME_SAMPLES, EndpointDetector, SpeechEndpoint
+from voice_input.vad import (
+    FRAME_BYTES,
+    FRAME_SAMPLES,
+    LEAD_SILENCE_SAMPLES,
+    EndpointDetector,
+    EnergyEndpointer,
+    SpeechEndpoint,
+    SpeechSegment,
+)
 
 
 def _silent() -> bytes:
@@ -84,3 +94,28 @@ def test_pre_roll_must_be_below_max_frames():
 def test_frame_math():
     assert FRAME_SAMPLES == 320
     assert FRAME_BYTES == 640
+
+
+def test_energy_endpointer_emits_with_lead_silence_floor():
+    """ADR-0011: the energy surface (segments + live snapshot) opens with the floor."""
+    assert LEAD_SILENCE_SAMPLES == 2_400  # 150 ms
+    endpointer = EnergyEndpointer(
+        EndpointDetector(trailing_silence_frames=2, pre_roll_frames=0)
+    )
+    floor = bytes(LEAD_SILENCE_SAMPLES * 2)
+
+    async def scenario() -> tuple[bytes, SpeechSegment | None]:
+        assert await endpointer.feed(_loud(), 0) is None
+        snapshot = endpointer.utterance_audio()
+        segment: SpeechSegment | None = None
+        for i in range(1, 4):
+            segment = await endpointer.feed(_silent(), i * FRAME_SAMPLES)
+            if segment is not None:
+                break
+        return snapshot, segment
+
+    snapshot, segment = asyncio.run(scenario())
+    assert segment is not None
+    assert segment.pcm16le == floor + _loud() + _silent() * 2
+    assert snapshot == floor + _loud()
+    assert segment.pcm16le.startswith(snapshot)  # live strict prefix kept

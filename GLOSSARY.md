@@ -30,6 +30,8 @@
 - **语音垫 / speech pad**：端点音频在语音起止之外各外扩 150 ms（前垫覆盖 Silero
   触发滞后于真实起点的 attack latency，ADR-0010；官方 `speech_pad_ms` 默认 30 ms），
   与 `VOICE_IN_VAD_MIN_SPEECH_MS` 的噪声过滤共同决定端点音频。
+- **前导静音底 / lead silence floor**：端点音频与 live 语音快照头部固定的 150 ms
+  数字静音；ASR 前端会吞掉无静音起头句子的首音节（实测 ≥50 ms 即恢复，ADR-0011）。
 - **能量降级 / energy degradation**：模型加载失败（构建期）或推理连续
   `MAX_VAD_FAILURES` 次失败（运行期，本连接内永久，重连或重启恢复）时改用能量
   VAD；两者管道行为与 `VOICE_IN_VAD=energy` 完全一致。
