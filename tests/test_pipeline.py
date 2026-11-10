@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import wave
 
-from voice_input.main import MAX_TEXT_LENGTH, _recognize_and_send, _send_one
+from voice_input.main import (
+    MAX_TEXT_LENGTH,
+    _recognize_and_send,
+    _send_one,
+    _write_endpoint_wav,
+)
 
 
 class _RecorderWs:
@@ -251,3 +257,15 @@ def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
     else:
         raise AssertionError("the non-reconnectable failure must propagate")
     assert len(attempts) == 2  # reconnected after the wrapped connection error
+
+
+def test_endpoint_dump_wav_carries_exact_bytes(tmp_path):
+    """VOICE_IN_DUMP_WAV files are playable WAVs of the exact utterance bytes."""
+    pcm = bytes(range(256)) * 4  # 1024 bytes = 32 ms
+    _write_endpoint_wav(str(tmp_path), 7, 600, pcm)
+    files = list(tmp_path.glob("ep0007-*-600ms.wav"))
+    assert len(files) == 1
+    with wave.open(str(files[0])) as wav_file:
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getframerate() == 16000
+        assert wav_file.readframes(wav_file.getnframes()) == pcm

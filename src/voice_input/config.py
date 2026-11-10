@@ -15,6 +15,10 @@ disables the live path outright.
 In-process GTCRN speech enhancement runs between capture and endpointing by
 default (ADR-0006); VOICE_IN_DENOISE=0 disables it and the pipeline forwards
 raw microphone audio.
+
+VOICE_IN_DUMP_WAV=<dir> is a debug aid: every endpoint's utterance audio (the
+exact bytes the batch ASR route uploads) is additionally written to that
+directory as a 16 kHz mono WAV for listening; unset keeps the pipeline silent.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ ASR_LIVE_TIMEOUT_MS_KEY: Final = "VOICE_IN_ASR_LIVE_TIMEOUT_MS"
 ASR_LIVE_MAX_FAILURES_KEY: Final = "VOICE_IN_ASR_LIVE_MAX_FAILURES"
 DENOISE_KEY: Final = "VOICE_IN_DENOISE"
 SPEAKER_THRESHOLD_KEY: Final = "VOICE_IN_SPEAKER_THRESHOLD"
+DUMP_WAV_DIR_KEY: Final = "VOICE_IN_DUMP_WAV"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
@@ -80,6 +85,7 @@ class Settings:
     asr_live_max_failures: int = DEFAULT_ASR_LIVE_MAX_FAILURES
     denoise: bool = True
     speaker_threshold: float = DEFAULT_SPEAKER_THRESHOLD
+    dump_wav_dir: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +147,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         speaker_threshold=_parse_float(
             source, SPEAKER_THRESHOLD_KEY, DEFAULT_SPEAKER_THRESHOLD
         ),
+        dump_wav_dir=_optional_text(source.get(DUMP_WAV_DIR_KEY)),
     )
 
 

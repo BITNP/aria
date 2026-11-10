@@ -95,3 +95,10 @@ def test_denoise_defaults_on_and_overridable():
     assert load_settings(dict(VALID)).denoise is True
     assert load_settings({**VALID, "VOICE_IN_DENOISE": "0"}).denoise is False
     assert load_settings({**VALID, "VOICE_IN_DENOISE": "on"}).denoise is True
+
+
+def test_dump_wav_dir_optional():
+    assert load_settings(dict(VALID)).dump_wav_dir is None
+    env = dict(VALID)
+    env["VOICE_IN_DUMP_WAV"] = " /tmp/voice-in-dump "
+    assert load_settings(env).dump_wav_dir == "/tmp/voice-in-dump"

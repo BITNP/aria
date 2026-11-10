@@ -25,6 +25,8 @@ import asyncio
 import logging
 import os
 import time
+import wave
+from pathlib import Path
 from typing import Any, cast
 
 from dotenv import load_dotenv
@@ -213,12 +215,31 @@ def build_endpointer(settings: Any) -> Endpointer:
     )
 
 
+def _write_endpoint_wav(directory: str, seq: int, speech_ms: int, pcm: bytes) -> None:
+    """Write one endpoint's utterance bytes as a 16 kHz mono WAV (VOICE_IN_DUMP_WAV).
+
+    The file is byte-identical to what the batch route uploads; the live route
+    streams a strict prefix of it (``utterance_audio``, ADR-0007), so listening
+    to a dump settles exactly what ASR received for that utterance -- including
+    whether the leading pad carried the speech onset.
+    """
+    name = f"ep{seq:04d}-{time.strftime('%H%M%S')}-{speech_ms}ms.wav"
+    path = Path(directory) / name
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE_HZ)
+        wav.writeframes(pcm)
+    LOGGER.debug("dumped endpoint audio (%d bytes) to %s", len(pcm), path)
+
+
 async def _collect(
     mic: PortAudioMic,
     enhancer: Enhancer | None,
     vad: Endpointer,
     queue: asyncio.Queue[tuple[bytes, int, LiveTranscriptStream | None]],
     live: LiveAsrTracker | None = None,
+    dump_wav_dir: str | None = None,
 ) -> None:
     """Read mic blocks, run endpoint detection, and push complete utterances to the queue.
 
@@ -229,8 +250,14 @@ async def _collect(
     session (started when the VAD opens an utterance); the endpoint's queue item
     carries that session so the worker can collect the transcript that has been
     streaming all along.
+    With ``dump_wav_dir`` every fired endpoint is additionally written there as
+    a WAV (debug aid; failures never break the capture loop).
     """
     timestamp = 0
+    dump_seq = 0
+    if dump_wav_dir is not None:
+        Path(dump_wav_dir).mkdir(parents=True, exist_ok=True)
+        LOGGER.info("endpoint audio dump enabled: %s", dump_wav_dir)
     await mic.open()
     try:
         while True:
@@ -246,6 +273,18 @@ async def _collect(
                 if live is not None:
                     await live.update(frame, vad, endpoint_fired=segment is not None)
                 if segment is not None:
+                    if dump_wav_dir is not None:
+                        dump_seq += 1
+                        try:
+                            await asyncio.to_thread(
+                                _write_endpoint_wav,
+                                dump_wav_dir,
+                                dump_seq,
+                                segment.duration_ms,
+                                segment.pcm16le,
+                            )
+                        except OSError:
+                            LOGGER.warning("endpoint dump failed", exc_info=True)
                     stream = live.take() if live is not None else None
                     LOGGER.debug(
                         "endpoint fired: %d ms audio, live_session=%s, queue_depth=%d/%d",
@@ -297,7 +336,9 @@ async def _run_with_hub(settings: Any) -> None:
         live = build_live_asr(settings)
         try:
             async with asyncio.TaskGroup() as tasks:
-                tasks.create_task(_collect(mic, enhancer, vad, queue, live))
+                tasks.create_task(
+                    _collect(mic, enhancer, vad, queue, live, settings.dump_wav_dir)
+                )
                 tasks.create_task(_recognize_and_send(ws, asr, speaker, queue, live))
         finally:
             if live is not None:
