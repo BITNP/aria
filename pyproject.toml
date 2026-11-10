@@ -8,12 +8,11 @@ authors = [
     { name = "noteas", email = "3818384646@qq.com" }
 ]
 dependencies = [
-    "httpx2>=2.16,<3",
+    "httpx2[ws]>=2.16,<3",
     "numpy>=2,<3",
     "onnxruntime>=1.20,<2",
     "python-dotenv>=1,<2",
     "sounddevice==0.5.6",
-    "websockets==16.1.1",
 ]
 
 [project.scripts]
@@ -28,6 +27,9 @@ dev = [
     "basedpyright>=1.31,<2",
     "pytest>=8",
     "ruff>=0.12",
+    # 测试假 hub 用 websockets.serve 起服务端——与真实 waycast hub 同一服务端栈
+    # （uvicorn[standard] 之下就是 websockets），用它验证 httpx2 客户端的真实互操作。
+    "websockets>=17.4,<18",
 ]
 
 [tool.hatch.build.targets.wheel]

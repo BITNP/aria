@@ -27,6 +27,7 @@ import time
 from typing import Any, cast
 
 from dotenv import load_dotenv
+from httpx2.websockets import WebSocketDisconnect, WebSocketNetworkError
 
 from voice_input.asr import OpenAICompatibleAsr
 from voice_input.capture import PortAudioMic
@@ -318,7 +319,15 @@ def build_live_asr(settings: Any) -> LiveAsrTracker | None:
     )
 
 
-RECONNECTABLE_ERRORS: tuple[type[BaseException], ...] = (HubConnectionError, ConnectionError, OSError)
+# httpx2 的断线异常（WebSocketDisconnect/WebSocketNetworkError）不是 OSError 系，
+# 必须显式列入，hub 断线才会走重连而不是炸穿 main。
+RECONNECTABLE_ERRORS: tuple[type[BaseException], ...] = (
+    HubConnectionError,
+    ConnectionError,
+    OSError,
+    WebSocketDisconnect,
+    WebSocketNetworkError,
+)
 
 
 def _reconnectable(exc: BaseException) -> bool:
