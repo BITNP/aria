@@ -3,7 +3,7 @@
 A module connects to the hub /ws/modules endpoint, advertises its capability as
 the first frame, and after the hub acknowledges it may send input frames over
 the same full-duplex connection.  The wire contract (ADR-0008) is implemented
-locally in voice_input.wire as plain JSON; the module and the core are separate
+locally in aria.wire as plain JSON; the module and the core are separate
 microservices that talk only over the network and share no Python package.
 
 This module is input-only: it never receives output_unit frames and holds no core
@@ -21,11 +21,11 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import websockets
 
-from voice_input.wire import dumps, make_frame, parse_frame
+from aria.wire import dumps, make_frame, parse_frame
 
 LOGGER = logging.getLogger(__name__)
 
-MODULE_NAME = "voice_input"
+MODULE_NAME = "aria"
 CAPABILITY_INPUT_DESCRIPTION = (
     "unified voice transcriptions from the microphone: captured via VAD endpoint "
     "detection and transcribed by an OpenAI-compatible ASR service"
@@ -160,7 +160,7 @@ class InputClient:
         self,
         content: str,
         *,
-        source: str = "voice_input",
+        source: str = "aria",
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Send one unified input frame; content is the ASR transcript, metadata carries module facts."""

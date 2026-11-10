@@ -7,7 +7,7 @@ graph's names/shapes/metadata because the production validator runs on it.
 
 T2 (bundled model present, else skipped): noise-only attenuation and
 speech-like preservation through the real model on deterministic synthetic
-audio.  An official noisy wav can additionally be fed via VOICE_IN_GTCRN_WAV.
+audio.  An official noisy wav can additionally be fed via ARIA_GTCRN_WAV.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any, cast
 import numpy
 import pytest
 
-from voice_input.denoise import (
+from aria.denoise import (
     MODEL_REVISION,
     GtcrnEnhancer,
     build_enhancer,
@@ -300,11 +300,9 @@ def test_real_model_preserves_speech_like_signal():
 
 @_HAS_MODEL
 def test_real_model_on_official_noisy_wav_is_stable():
-    path = os.environ.get("VOICE_IN_GTCRN_WAV", "")
+    path = os.environ.get("ARIA_GTCRN_WAV", "")
     if not path or not Path(path).is_file():
-        pytest.skip(
-            "set VOICE_IN_GTCRN_WAV to a 16 kHz mono WAV for the official fixture"
-        )
+        pytest.skip("set ARIA_GTCRN_WAV to a 16 kHz mono WAV for the official fixture")
     with wave.open(path) as source:
         assert source.getframerate() == 16_000 and source.getnchannels() == 1
         pcm = numpy.frombuffer(

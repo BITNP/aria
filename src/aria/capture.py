@@ -1,7 +1,7 @@
 """Microphone capture with minimal dependencies.
 
 Uses sounddevice (PortAudio) for a blocking raw PCM16 mono 16 kHz capture loop of 20 ms
-blocks, matching the frame contract in voice_input.vad.  A reader callable is injected
+blocks, matching the frame contract in aria.vad.  A reader callable is injected
 so tests never touch a real device.
 """
 
@@ -12,7 +12,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
-from voice_input.vad import FRAME_BYTES, FRAME_SAMPLES, SAMPLE_RATE_HZ
+from aria.vad import FRAME_BYTES, FRAME_SAMPLES, SAMPLE_RATE_HZ
 
 if TYPE_CHECKING:
     from sounddevice import RawInputStream

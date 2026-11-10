@@ -8,7 +8,7 @@ prenormalization and window shaping used by that runtime.  This is a NumPy
 implementation of that constrained spec, kept dependency-free apart from numpy.
 
 The frontend operates on the 1.5 s identification window (or the whole longer
-utterance) assembled by voice_input.speaker.
+utterance) assembled by aria.speaker.
 """
 
 from __future__ import annotations

@@ -31,19 +31,19 @@ from typing import Any, cast
 
 from dotenv import load_dotenv
 
-from voice_input.asr import OpenAICompatibleAsr
-from voice_input.capture import PortAudioMic
-from voice_input.config import load_settings
-from voice_input.denoise import Enhancer, build_enhancer
-from voice_input.hub_client import MODULE_NAME, HubConnectionError, InputClient
-from voice_input.live_asr import LiveAsrTracker, LiveTranscriptStream, live_url_for
-from voice_input.silero_vad import SileroEndpointer, build_vad_model
-from voice_input.speaker import (
+from aria.asr import OpenAICompatibleAsr
+from aria.capture import PortAudioMic
+from aria.config import load_settings
+from aria.denoise import Enhancer, build_enhancer
+from aria.hub_client import MODULE_NAME, HubConnectionError, InputClient
+from aria.live_asr import LiveAsrTracker, LiveTranscriptStream, live_url_for
+from aria.silero_vad import SileroEndpointer, build_vad_model
+from aria.speaker import (
     SpeakerIdentifier,
     build_speaker_identifier,
     disabled_status,
 )
-from voice_input.vad import (
+from aria.vad import (
     SAMPLE_RATE_HZ,
     EndpointDetector,
     Endpointer,
@@ -56,12 +56,12 @@ ENDPOINT_QUEUE_SIZE = 4
 MAX_TEXT_LENGTH = 8192
 HUB_RECONNECT_DELAY_SECONDS = 3.0
 
-LOG_LEVEL_KEY = "VOICE_IN_LOG_LEVEL"
-DEPS_LOG_LEVEL_KEY = "VOICE_IN_DEPS_LOG_LEVEL"
+LOG_LEVEL_KEY = "ARIA_LOG_LEVEL"
+DEPS_LOG_LEVEL_KEY = "ARIA_DEPS_LOG_LEVEL"
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 # 第三方噪音源（WS 帧、HTTP 请求、事件循环、ONNX 运行时）默认钉在 WARNING，
 # 本模块自己的调试日志（端点/转写结果等 DEBUG）不受影响；需排查依赖时
-# 用 VOICE_IN_DEPS_LOG_LEVEL 单独放开。
+# 用 ARIA_DEPS_LOG_LEVEL 单独放开。
 # httpx2/httpcore2 是 openai SDK 内置 vendored 客户端的日志器名。
 _THIRD_PARTY_LOGGERS = (
     "websockets",
@@ -77,8 +77,8 @@ _THIRD_PARTY_LOGGERS = (
 
 
 def configure_logging() -> None:
-    """本模块日志级别走 VOICE_IN_LOG_LEVEL（默认 INFO），依赖库走
-    VOICE_IN_DEPS_LOG_LEVEL（默认 WARNING）。"""
+    """本模块日志级别走 ARIA_LOG_LEVEL（默认 INFO），依赖库走
+    ARIA_DEPS_LOG_LEVEL（默认 WARNING）。"""
     level = os.environ.get(LOG_LEVEL_KEY, "INFO").strip().upper() or "INFO"
     deps_level = (
         os.environ.get(DEPS_LOG_LEVEL_KEY, "WARNING").strip().upper() or "WARNING"
@@ -131,7 +131,7 @@ async def _recognize_and_send(
     after the endpoint, long before a batch upload of the same audio could
     start.  If the session failed or timed out, finish() has already closed the
     connection (freeing the server-side model lock) and we fall back to batch.
-    ``ws=None`` (standalone debug mode, VOICE_IN_STANDALONE) keeps every other
+    ``ws=None`` (standalone debug mode, ARIA_STANDALONE) keeps every other
     step identical but logs the transcript instead of sending a frame.
     """
     while True:
@@ -194,7 +194,7 @@ async def _recognize_and_send(
 def build_endpointer(settings: Any) -> Endpointer:
     """In-process Silero VAD by default, energy VAD on demand or on load failure.
 
-    ``VOICE_IN_VAD=energy`` skips the model entirely; a missing or unloadable
+    ``ARIA_VAD=energy`` skips the model entirely; a missing or unloadable
     bundled model degrades the same way (ADR-0007).  The Silero endpointer also
     degrades to the energy detector on its own if inference keeps failing.
     """
@@ -221,7 +221,7 @@ def build_endpointer(settings: Any) -> Endpointer:
 
 
 def _write_endpoint_wav(directory: str, seq: int, speech_ms: int, pcm: bytes) -> None:
-    """Write one endpoint's utterance bytes as a 16 kHz mono WAV (VOICE_IN_DUMP_WAV).
+    """Write one endpoint's utterance bytes as a 16 kHz mono WAV (ARIA_DUMP_WAV).
 
     The file is byte-identical to what the batch route uploads; the live route
     streams a strict prefix of it (``utterance_audio``, ADR-0007), so listening
@@ -355,9 +355,9 @@ async def _run_with_hub(settings: Any) -> None:
 
 
 async def _run_standalone(settings: Any) -> None:
-    """Standalone debug run (VOICE_IN_STANDALONE): the full pipeline, no hub.
+    """Standalone debug run (ARIA_STANDALONE): the full pipeline, no hub.
 
-    Capture, enhancement, endpointing, dumps (VOICE_IN_DUMP_WAV) and ASR all
+    Capture, enhancement, endpointing, dumps (ARIA_DUMP_WAV) and ASR all
     run exactly as in production; transcripts are logged instead of sent and no
     speaker labels are computed.  A pipeline failure ends the run (no hub
     means no reconnect loop -- a debug run should die loudly).

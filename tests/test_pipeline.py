@@ -6,7 +6,7 @@ import asyncio
 import wave
 from types import SimpleNamespace
 
-from voice_input.main import (
+from aria.main import (
     MAX_TEXT_LENGTH,
     _recognize_and_send,
     _send_one,
@@ -81,7 +81,7 @@ class _FakeAsr:
         self.calls = 0
 
     async def transcribe(self, pcm: bytes) -> object:
-        from voice_input.asr import Recognition
+        from aria.asr import Recognition
 
         self.calls += 1
         return Recognition(self._text)
@@ -95,7 +95,7 @@ class _StubStream:
         self.aborted = False
 
     async def finish(self, timeout: float) -> str:
-        from voice_input.live_asr import LiveAsrError
+        from aria.live_asr import LiveAsrError
 
         if self._final is None:
             raise LiveAsrError("stub failure")
@@ -233,7 +233,7 @@ def test_stream_without_tracker_is_aborted_and_batch_used():
 
 def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
     """Hub drops surface as ExceptionGroup; the reconnect loop must survive them."""
-    from voice_input import main as main_module
+    from aria import main as main_module
 
     attempts: list[int] = []
 
@@ -244,7 +244,7 @@ def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
         raise ValueError("non-reconnectable failures still propagate")
 
     async def scenario():
-        from voice_input.main import run
+        from aria.main import run
 
         await run()
 
@@ -263,7 +263,7 @@ def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
 
 
 def test_endpoint_dump_wav_carries_exact_bytes(tmp_path):
-    """VOICE_IN_DUMP_WAV files are playable WAVs of the exact utterance bytes."""
+    """ARIA_DUMP_WAV files are playable WAVs of the exact utterance bytes."""
     pcm = bytes(range(256)) * 4  # 1024 bytes = 32 ms
     _write_endpoint_wav(str(tmp_path), 7, 600, pcm)
     files = list(tmp_path.glob("ep0007-*-600ms.wav"))
@@ -275,7 +275,7 @@ def test_endpoint_dump_wav_carries_exact_bytes(tmp_path):
 
 
 def test_standalone_consumer_consumes_without_sending():
-    """ws=None (VOICE_IN_STANDALONE): transcripts are consumed, nothing is sent."""
+    """ws=None (ARIA_STANDALONE): transcripts are consumed, nothing is sent."""
 
     async def scenario():
         queue: asyncio.Queue = asyncio.Queue(maxsize=1)

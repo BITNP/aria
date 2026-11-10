@@ -16,6 +16,43 @@ wheels = [
 ]
 
 [[package]]
+name = "aria"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "httpx2" },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "python-dotenv" },
+    { name = "sounddevice" },
+    { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "basedpyright" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx2", specifier = ">=2.16,<3" },
+    { name = "numpy", specifier = ">=2,<3" },
+    { name = "onnxruntime", specifier = ">=1.20,<2" },
+    { name = "python-dotenv", specifier = ">=1,<2" },
+    { name = "sounddevice", specifier = ">=0.5.6,<1" },
+    { name = "websockets", specifier = ">=17.4,<18" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.31,<2" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.12" },
+]
+
+[[package]]
 name = "basedpyright"
 version = "1.40.2"
 source = { registry = "https://mirrors.cernet.edu.cn/pypi/web/simple" }
@@ -390,43 +427,6 @@ source = { registry = "https://mirrors.cernet.edu.cn/pypi/web/simple" }
 sdist = { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/74/26/2fbeedb218a787a5eea551c7532cac4e009f83d689dd2faa0d0353473f86/python_dotenv-1.2.4.tar.gz", hash = "sha256:f0d53e69935a851c0dcc78f3ab7aaccd8cabef0b92382b576b824212902873c0", size = 60824, upload-time = "2026-10-01T05:36:10Z" }
 wheels = [
     { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl", hash = "sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc", size = 23266, upload-time = "2026-10-01T05:36:08.633Z" },
-]
-
-[[package]]
-name = "raspberrygirl-voice-input"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "httpx2" },
-    { name = "numpy" },
-    { name = "onnxruntime" },
-    { name = "python-dotenv" },
-    { name = "sounddevice" },
-    { name = "websockets" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "basedpyright" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx2", specifier = ">=2.16,<3" },
-    { name = "numpy", specifier = ">=2,<3" },
-    { name = "onnxruntime", specifier = ">=1.20,<2" },
-    { name = "python-dotenv", specifier = ">=1,<2" },
-    { name = "sounddevice", specifier = ">=0.5.6,<1" },
-    { name = "websockets", specifier = ">=17.4,<18" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "basedpyright", specifier = ">=1.31,<2" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "ruff", specifier = ">=0.12" },
 ]
 
 [[package]]

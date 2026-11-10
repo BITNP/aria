@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from voice_input.vad import Endpointer
+from aria.vad import Endpointer
 
 LOGGER = logging.getLogger(__name__)
 

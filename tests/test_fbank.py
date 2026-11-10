@@ -6,13 +6,13 @@ import math
 
 import numpy
 
-from voice_input.fbank import (
+from aria.fbank import (
     FRAME_LENGTH_SAMPLES,
     FRAME_SHIFT_SAMPLES,
     NUM_BINS,
     extract,
 )
-from voice_input.vad import SAMPLE_RATE_HZ
+from aria.vad import SAMPLE_RATE_HZ
 
 
 def _tone(frames: int, frequency: float = 440.0) -> bytes:

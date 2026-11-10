@@ -1,5 +1,5 @@
 [project]
-name = "raspberrygirl-voice-input"
+name = "aria"
 version = "0.1.0"
 description = "Raspberry Girl voice input module: capture + VAD + ASR -> waycast input frames."
 readme = "README.md"
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-voice-input = "voice_input.main:main"
+aria = "aria.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -33,12 +33,12 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/voice_input"]
+packages = ["src/aria"]
 include = [
-    "src/voice_input/models/campp.onnx",
-    "src/voice_input/models/campp.onnx.data",
-    "src/voice_input/models/gtcrn_simple.onnx",
-    "src/voice_input/models/silero_vad.onnx",
+    "src/aria/models/campp.onnx",
+    "src/aria/models/campp.onnx.data",
+    "src/aria/models/gtcrn_simple.onnx",
+    "src/aria/models/silero_vad.onnx",
 ]
 
 [tool.pytest.ini_options]

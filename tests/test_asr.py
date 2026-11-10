@@ -8,8 +8,8 @@ from io import BytesIO
 
 import httpx2
 
-from voice_input.asr import OpenAICompatibleAsr, _wav_bytes
-from voice_input.vad import SAMPLE_RATE_HZ
+from aria.asr import OpenAICompatibleAsr, _wav_bytes
+from aria.vad import SAMPLE_RATE_HZ
 
 
 class _FakeTransport(httpx2.AsyncBaseTransport):

@@ -7,8 +7,8 @@ import asyncio
 import pytest
 import websockets
 
-from voice_input.hub_client import HubConnectionError, InputClient
-from voice_input.wire import dumps, make_frame, parse_frame
+from aria.hub_client import HubConnectionError, InputClient
+from aria.wire import dumps, make_frame, parse_frame
 
 
 def _echo_server(scope):
@@ -18,9 +18,7 @@ def _echo_server(scope):
         first = await ws.recv()
         frame = parse_frame(first)
         assert frame["type"] == "capability" and frame["payload"]["kind"] == "input"
-        await ws.send(
-            dumps(make_frame("capability", "voice_input", {"accepted": True}))
-        )
+        await ws.send(dumps(make_frame("capability", "aria", {"accepted": True})))
         while True:
             raw = await ws.recv()
             scope.append(parse_frame(raw))
@@ -45,7 +43,7 @@ def test_handshake_and_send_input():
     assert len(scope) == 1
     inp = scope[0]
     assert inp["type"] == "input"
-    assert inp["module"] == "voice_input"
+    assert inp["module"] == "aria"
     assert inp["payload"]["content"] == "你好"
     assert inp["payload"]["source"] == "asr"
     assert inp["payload"]["metadata"]["speech_duration_ms"] == 500
@@ -54,9 +52,7 @@ def test_handshake_and_send_input():
 def test_hub_rejects_capability():
     async def handler(ws):
         await ws.recv()
-        await ws.send(
-            dumps(make_frame("capability", "voice_input", {"accepted": False}))
-        )
+        await ws.send(dumps(make_frame("capability", "aria", {"accepted": False})))
 
     async def scenario():
         server = await websockets.serve(handler, "127.0.0.1", 0)
@@ -80,12 +76,8 @@ def test_status_capability_and_query_roundtrip():
         first = await ws.recv()
         frame = parse_frame(first)
         assert frame["payload"]["status"]["enabled"] is True
-        await ws.send(
-            dumps(make_frame("capability", "voice_input", {"accepted": True}))
-        )
-        await ws.send(
-            dumps(make_frame("status_query", "voice_input", {}, request_id="q-1"))
-        )
+        await ws.send(dumps(make_frame("capability", "aria", {"accepted": True})))
+        await ws.send(dumps(make_frame("status_query", "aria", {}, request_id="q-1")))
         reply = parse_frame(await ws.recv())
         received.append(reply)
         await ws.close()
@@ -118,9 +110,7 @@ def test_no_status_capability_without_provider():
     async def handler(ws):
         frame = parse_frame(await ws.recv())
         seen.update(frame["payload"])
-        await ws.send(
-            dumps(make_frame("capability", "voice_input", {"accepted": True}))
-        )
+        await ws.send(dumps(make_frame("capability", "aria", {"accepted": True})))
         # keep the connection open until the client exits
         try:
             await ws.recv()

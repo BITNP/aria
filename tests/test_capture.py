@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from voice_input.capture import PortAudioMic
-from voice_input.vad import FRAME_BYTES
+from aria.capture import PortAudioMic
+from aria.vad import FRAME_BYTES
 
 
 def test_injected_reader_roundtrip():

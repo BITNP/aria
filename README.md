@@ -1,4 +1,4 @@
-# 树莓娘语音输入模块
+# 云和（Aria）· 树莓娘语音输入模块
 
 本仓库是树莓娘（Raspberry Girl）重构体系中的**语音输入模块**：负责麦克风采集、VAD 端点检测与 ASR 识别，并把识别结果作为一个 waycast 输入帧发送给核心。核心是 [waycast](../waycast/README.md)；本模块是它的一个输入模块（capability.kind = "input"），完全按 waycast 的 wire 契约（ADR-0008）工作，不包含任何核心逻辑。模块与核心是独立的微服务：两者之间只通过网络（WebSocket + wire JSON 帧）通信，本仓库不依赖 waycast 的任何 Python 包。
 
@@ -8,11 +8,11 @@
 
 - **采集**：持续从默认或指定麦克风采集 16 kHz 单声道 PCM16 音频块。
 - **降噪（语音增强）**：采集后先用随包分发的 GTCRN 流式模型逐帧降噪（ADR-0006），
-  VAD、ASR 与说话人识别一律消费降噪后的音频；`VOICE_IN_DENOISE=0` 或模型不可用时
+  VAD、ASR 与说话人识别一律消费降噪后的音频；`ARIA_DENOISE=0` 或模型不可用时
   直接使用原始麦克风音频。注意 GTCRN 会压制「不像语音」的声音（提示音、哼唱等），
   非语音音频更难触发输入，属预期行为。
 - **端点检测（VAD）**：默认用随包分发的 Silero VAD ONNX 模型进程内逐帧检测语音
-  起止，把一段语音聚合成一个端点（ADR-0007）；`VOICE_IN_VAD=energy` 或模型不可用
+  起止，把一段语音聚合成一个端点（ADR-0007）；`ARIA_VAD=energy` 或模型不可用
   时改用能量 VAD。说完一句话并稍作停顿即产生一个端点。
 - **ASR**：调用 OpenAI 兼容的语音识别服务，把端点音频转成文本。默认走**真流式
   live 路径**：语音在途时边采集边上传，出文本的时刻由端点检测决定而非识别耗时
@@ -34,7 +34,7 @@
 - Python 3.12+ 与 uv（https://docs.astral.sh/uv/ ），Linux 下需要 PortAudio 运行库。
 - 已启动且可达的 waycast hub（例如 ws://127.0.0.1:8000 ），以及分配给语音输入的连接令牌。
 - 一个 OpenAI 兼容的 ASR 服务（地址 + 模型名 + 可选 API Key）。本机部署为 audio.cpp（`http://127.0.0.1:8080`，模型 `nemotron-3.5-asr-streaming`，与 presenter 的 TTS 共用同一服务；本地服务无需密钥）。
-- 说话人识别（CAM++）、降噪（GTCRN）与端点检测（Silero VAD）模型均随包分发在 `src/voice_input/models/`，已随仓库提交、不读环境变量；来源与校验和见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+- 说话人识别（CAM++）、降噪（GTCRN）与端点检测（Silero VAD）模型均随包分发在 `src/aria/models/`，已随仓库提交、不读环境变量；来源与校验和见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 ## 安装与配置
 
@@ -53,32 +53,32 @@ cp .env.example .env
 ```dotenv
 WAYCAST_HUB_URL=ws://127.0.0.1:8000
 WAYCAST_HUB_TOKEN=填写核心分配给语音输入的连接令牌
-VOICE_IN_ASR_ENDPOINT=http://127.0.0.1:8080/v1
-VOICE_IN_ASR_MODEL=nemotron-3.5-asr-streaming
-VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
+ARIA_ASR_ENDPOINT=http://127.0.0.1:8080/v1
+ARIA_ASR_MODEL=nemotron-3.5-asr-streaming
+ARIA_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 ```
 
 可选配置项：
 
 | 配置项 | 用途 |
 | --- | --- |
-| VOICE_IN_DEVICE | 指定麦克风设备名称；不填用系统默认输入设备 |
-| VOICE_IN_VAD | 端点检测引擎（默认 `silero`：进程内 Silero VAD ONNX，ADR-0007；设 `energy` 强制能量 VAD） |
-| VOICE_IN_VAD_THRESHOLD | Silero 语音判定概率阈值（默认 0.5；负阈值自动取 threshold−0.15） |
-| VOICE_IN_VAD_MIN_SPEECH_MS | 短于此长度的语音段视为噪声丢弃（默认 250） |
-| VOICE_IN_VAD_SPEECH_THRESHOLD | VAD 语音判定能量阈值（默认 300；能量 VAD 与降级路径使用） |
-| VOICE_IN_VAD_TRAILING_SILENCE_FRAMES | 判定一句结束所需的连续静音帧数（默认 20） |
-| VOICE_IN_VAD_MAX_FRAMES | 单段语音最大帧数（默认 1500） |
-| VOICE_IN_VAD_PRE_ROLL_FRAMES | 语音起始前保留的前摇帧数（默认 5；能量 VAD 与降级路径使用） |
-| VOICE_IN_ASR_LIVE | 真流式 ASR 路径开关（默认开；设 `0` 关闭，全部走批量转写） |
-| VOICE_IN_ASR_LIVE_TIMEOUT_MS | 端点后等待流式最终文本的毫秒数（默认 10000；超时按失败回退批量） |
-| VOICE_IN_ASR_LIVE_MAX_FAILURES | 连续失败多少次后永久关闭流式路径（默认 3） |
-| VOICE_IN_DENOISE | GTCRN 降噪开关（默认开；设 `0` 关闭，直接用原始麦克风音频，ADR-0006） |
-| VOICE_IN_SPEAKER_THRESHOLD | 说话人复用的余弦相似度阈值（默认 0.31，真实语音工作点，ADR-0009；调高更倾向铸新 ID，调低更倾向合并） |
-| VOICE_IN_DUMP_WAV | 调试：填目录则每个端点发给 ASR 的音频额外落盘为该目录下 WAV（16 kHz 单声道，内容与批量上传逐字节一致；默认关闭不落盘） |
-| VOICE_IN_STANDALONE | 独立调试模式（默认关；设 `1` 全管线运行但不连 hub，转写只记日志不发 input 帧，可与 VOICE_IN_DUMP_WAV 搭配离线排查） |
-| VOICE_IN_LOG_LEVEL | 本模块日志级别（默认 `INFO`；设 `DEBUG` 输出端点、ASR 转写结果、说话人判定分数等调试信息） |
-| VOICE_IN_DEPS_LOG_LEVEL | 第三方依赖日志级别（默认 `WARNING`，屏蔽 websockets/httpx/asyncio/onnxruntime 噪音） |
+| ARIA_DEVICE | 指定麦克风设备名称；不填用系统默认输入设备 |
+| ARIA_VAD | 端点检测引擎（默认 `silero`：进程内 Silero VAD ONNX，ADR-0007；设 `energy` 强制能量 VAD） |
+| ARIA_VAD_THRESHOLD | Silero 语音判定概率阈值（默认 0.5；负阈值自动取 threshold−0.15） |
+| ARIA_VAD_MIN_SPEECH_MS | 短于此长度的语音段视为噪声丢弃（默认 250） |
+| ARIA_VAD_SPEECH_THRESHOLD | VAD 语音判定能量阈值（默认 300；能量 VAD 与降级路径使用） |
+| ARIA_VAD_TRAILING_SILENCE_FRAMES | 判定一句结束所需的连续静音帧数（默认 20） |
+| ARIA_VAD_MAX_FRAMES | 单段语音最大帧数（默认 1500） |
+| ARIA_VAD_PRE_ROLL_FRAMES | 语音起始前保留的前摇帧数（默认 5；能量 VAD 与降级路径使用） |
+| ARIA_ASR_LIVE | 真流式 ASR 路径开关（默认开；设 `0` 关闭，全部走批量转写） |
+| ARIA_ASR_LIVE_TIMEOUT_MS | 端点后等待流式最终文本的毫秒数（默认 10000；超时按失败回退批量） |
+| ARIA_ASR_LIVE_MAX_FAILURES | 连续失败多少次后永久关闭流式路径（默认 3） |
+| ARIA_DENOISE | GTCRN 降噪开关（默认开；设 `0` 关闭，直接用原始麦克风音频，ADR-0006） |
+| ARIA_SPEAKER_THRESHOLD | 说话人复用的余弦相似度阈值（默认 0.31，真实语音工作点，ADR-0009；调高更倾向铸新 ID，调低更倾向合并） |
+| ARIA_DUMP_WAV | 调试：填目录则每个端点发给 ASR 的音频额外落盘为该目录下 WAV（16 kHz 单声道，内容与批量上传逐字节一致；默认关闭不落盘） |
+| ARIA_STANDALONE | 独立调试模式（默认关；设 `1` 全管线运行但不连 hub，转写只记日志不发 input 帧，可与 ARIA_DUMP_WAV 搭配离线排查） |
+| ARIA_LOG_LEVEL | 本模块日志级别（默认 `INFO`；设 `DEBUG` 输出端点、ASR 转写结果、说话人判定分数等调试信息） |
+| ARIA_DEPS_LOG_LEVEL | 第三方依赖日志级别（默认 `WARNING`，屏蔽 websockets/httpx/asyncio/onnxruntime 噪音） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
 
 ## 启动
@@ -86,7 +86,7 @@ VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 先启动 waycast hub，然后运行：
 
 ```sh
-uv run --locked voice-input
+uv run --locked aria
 ```
 
 说完一句话并稍作停顿，识别文本就会作为输入帧发送给核心。按 Ctrl+C 结束。
@@ -94,6 +94,14 @@ uv run --locked voice-input
 ## 相关链接
 
 - 开发者文档：[DEVELOPMENT.md](DEVELOPMENT.md)（内部实现、模型来源与校验和、测试分层）。
-- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX、0008 live 空文本不回退批量〔修正 0005 回退语义〕、0009 说话人复用阈值 0.31〔修正 0002 阈值〕）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
-- 核心仓库：[waycast](../waycast/)，契约文档见 ADR-0008（waycast/docs/adr/0008-module-network-protocol.md）、ADR-0011（waycast/docs/adr/0011-agent-decides-turn-taking.md）。
+- 本仓库的架构决策与模块专属术语见 [docs/adr/](docs/adr/)（0001 独立微服务项目、0002 说话人 ID、0003/0004 Silero 端点检测〔已被 0007 取代〕、0005 真流式 ASR、0006 进程内 GTCRN 降噪、0007 进程内 Silero VAD ONNX、0008 live 空文本不回退批量〔修正 0005 回退语义〕、0009 说话人复用阈值 0.31〔修正 0002 阈值〕、0013 更名为云和 Aria〔含旧标识符映射〕）；本模块是独立微服务项目，与 waycast 仅经 wire 契约（ADR-0008）松耦合。
+- 核心仓库：[waycast（道枢）](../waycast/)，契约文档见 ADR-0008（waycast/docs/adr/0008-module-network-protocol.md）、ADR-0011（waycast/docs/adr/0011-agent-decides-turn-taking.md）。
 - 旧语音输入实现（只读参考，不复用）：[bitnp-raspberrygirl-vtuber-mic](../bitnp-raspberrygirl-vtuber-mic/)。
+
+## 命名来历
+
+本模块原名 **raspberrygirl-voice-input**，2026-11-10 依 waycast ADR-0015 更名为**云和（Aria）**（本仓库 ADR-0013 记录标识符映射）。
+
+- **云和**：出自《周礼·春官·大司乐》「大司乐……奏黄钟，歌大吕，舞云门，以祀天神」一脉的庙堂乐章语汇，「云和之琴瑟」是周代雅乐所用琴瑟之名。这里再压两层现代义：**云**即云合成——本模块的 ASR 走云端/OpenAI 兼容识别服务；**和**即和声——把噪声、语音、多人声混作的一片声音调和成一句可懂的文本，正是采集→降噪→端点→识别的全部工作。
+- **Aria**：歌剧咏叹调——旋律自乐队与歌者的呼吸中来，唱成一段可被听懂、被记住的旋律；本模块把一段段呼吸般的连续语音，唱成一句句干净的文本帧。附带一提，ARIA（Accessible Rich Internet Applications）也是 W3C 的无障碍协议缩写，与「让每个声音都被听懂」的立意相映。
+- 树莓娘在人群里听你：云生和声，咏叹成句——这就是「听见」的过程。

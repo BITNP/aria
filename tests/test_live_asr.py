@@ -14,7 +14,7 @@ from typing import Self
 
 import pytest
 
-from voice_input.live_asr import (
+from aria.live_asr import (
     LiveAsrError,
     LiveAsrTracker,
     LiveAsrUnsupported,

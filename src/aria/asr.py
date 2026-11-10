@@ -19,7 +19,7 @@ from typing import cast
 
 import httpx2
 
-from voice_input.vad import wav_bytes as _wav_bytes
+from aria.vad import wav_bytes as _wav_bytes
 
 LOGGER = logging.getLogger(__name__)
 

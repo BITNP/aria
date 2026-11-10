@@ -6,21 +6,19 @@ import json
 
 import pytest
 
-from voice_input.wire import PROTOCOL_VERSION, WireError, dumps, make_frame, parse_frame
+from aria.wire import PROTOCOL_VERSION, WireError, dumps, make_frame, parse_frame
 
 
 def test_roundtrip_capability_frame():
-    frame = make_frame(
-        "capability", "voice_input", {"name": "voice_input", "kind": "input"}
-    )
+    frame = make_frame("capability", "aria", {"name": "aria", "kind": "input"})
     raw = dumps(frame)
     parsed = parse_frame(raw)
     assert parsed == {
         "protocol_version": PROTOCOL_VERSION,
         "type": "capability",
-        "module": "voice_input",
+        "module": "aria",
         "request_id": None,
-        "payload": {"name": "voice_input", "kind": "input"},
+        "payload": {"name": "aria", "kind": "input"},
     }
 
 
@@ -30,15 +28,15 @@ def test_roundtrip_input_frame_matches_unified_input():
         "source": "asr",
         "metadata": {"speech_duration_ms": 500},
     }
-    frame = make_frame("input", "voice_input", payload)
+    frame = make_frame("input", "aria", payload)
     parsed = parse_frame(dumps(frame))
     assert parsed["type"] == "input"
-    assert parsed["module"] == "voice_input"
+    assert parsed["module"] == "aria"
     assert parsed["payload"] == payload
 
 
 def test_parse_frame_accepts_dict_and_bytes():
-    frame = make_frame("input", "voice_input", {"content": "x"})
+    frame = make_frame("input", "aria", {"content": "x"})
     assert parse_frame(frame) == frame
     assert parse_frame(dumps(frame).encode("utf-8")) == frame
 

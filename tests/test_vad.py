@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from voice_input.vad import (
+from aria.vad import (
     FRAME_BYTES,
     FRAME_SAMPLES,
     LEAD_SILENCE_SAMPLES,

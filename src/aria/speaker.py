@@ -43,8 +43,8 @@ from typing import Final, Protocol
 
 import numpy
 
-from voice_input.fbank import extract as extract_fbank
-from voice_input.vad import SAMPLE_RATE_HZ
+from aria.fbank import extract as extract_fbank
+from aria.vad import SAMPLE_RATE_HZ
 
 LOGGER = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ class SpeakerIdentifier:
 
 def bundled_model_path() -> Path:
     """Resolve the bundled CAM++ model file (ADR-0002: never from the environment)."""
-    return Path(str(files("voice_input.models").joinpath("campp.onnx")))
+    return Path(str(files("aria.models").joinpath("campp.onnx")))
 
 
 def build_speaker_identifier(

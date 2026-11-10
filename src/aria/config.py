@@ -3,23 +3,23 @@
 All values come from the environment (the .env file is loaded first by main).  The
 module connects to the waycast hub (WAYCAST_HUB_URL / WAYCAST_HUB_TOKEN) and
 transcribes microphone audio with an OpenAI-compatible ASR service
-(VOICE_IN_ASR_ENDPOINT / VOICE_IN_ASR_MODEL / VOICE_IN_ASR_API_KEY).
+(ARIA_ASR_ENDPOINT / ARIA_ASR_MODEL / ARIA_ASR_API_KEY).
 
 Endpoint detection defaults to the in-process Silero VAD ONNX model (ADR-0007),
 with the energy VAD as automatic fallback when the model cannot load and as the
-forced choice via VOICE_IN_VAD=energy.
+forced choice via ARIA_VAD=energy.
 Transcription prefers the streaming live route on the same ASR server and falls
-back to the batch route per utterance on failure (ADR-0005); VOICE_IN_ASR_LIVE=0
+back to the batch route per utterance on failure (ADR-0005); ARIA_ASR_LIVE=0
 disables the live path outright.
 
 In-process GTCRN speech enhancement runs between capture and endpointing by
-default (ADR-0006); VOICE_IN_DENOISE=0 disables it and the pipeline forwards
+default (ADR-0006); ARIA_DENOISE=0 disables it and the pipeline forwards
 raw microphone audio.
 
-VOICE_IN_DUMP_WAV=<dir> is a debug aid: every endpoint's utterance audio (the
+ARIA_DUMP_WAV=<dir> is a debug aid: every endpoint's utterance audio (the
 exact bytes the batch ASR route uploads) is additionally written to that
 directory as a 16 kHz mono WAV for listening; unset keeps the pipeline silent.
-VOICE_IN_STANDALONE=1 is the matching debug mode: the full capture -> VAD ->
+ARIA_STANDALONE=1 is the matching debug mode: the full capture -> VAD ->
 ASR pipeline runs without ever connecting to the hub, and transcripts are only
 logged (WAYCAST_HUB_URL must still be set for validation but is unused).
 """
@@ -34,24 +34,24 @@ from typing import Final
 WAYCAST_HUB_URL_KEY: Final = "WAYCAST_HUB_URL"
 WAYCAST_HUB_TOKEN_KEY: Final = "WAYCAST_HUB_TOKEN"
 WAYCAST_TLS_CA_KEY: Final = "WAYCAST_TLS_CA"
-ASR_ENDPOINT_KEY: Final = "VOICE_IN_ASR_ENDPOINT"
-ASR_MODEL_KEY: Final = "VOICE_IN_ASR_MODEL"
-ASR_API_KEY_KEY: Final = "VOICE_IN_ASR_API_KEY"
-DEVICE_KEY: Final = "VOICE_IN_DEVICE"
-VAD_SPEECH_THRESHOLD_KEY: Final = "VOICE_IN_VAD_SPEECH_THRESHOLD"
-VAD_TRAILING_SILENCE_FRAMES_KEY: Final = "VOICE_IN_VAD_TRAILING_SILENCE_FRAMES"
-VAD_MAX_FRAMES_KEY: Final = "VOICE_IN_VAD_MAX_FRAMES"
-VAD_PRE_ROLL_FRAMES_KEY: Final = "VOICE_IN_VAD_PRE_ROLL_FRAMES"
-VAD_ENGINE_KEY: Final = "VOICE_IN_VAD"
-VAD_THRESHOLD_KEY: Final = "VOICE_IN_VAD_THRESHOLD"
-VAD_MIN_SPEECH_MS_KEY: Final = "VOICE_IN_VAD_MIN_SPEECH_MS"
-ASR_LIVE_KEY: Final = "VOICE_IN_ASR_LIVE"
-ASR_LIVE_TIMEOUT_MS_KEY: Final = "VOICE_IN_ASR_LIVE_TIMEOUT_MS"
-ASR_LIVE_MAX_FAILURES_KEY: Final = "VOICE_IN_ASR_LIVE_MAX_FAILURES"
-DENOISE_KEY: Final = "VOICE_IN_DENOISE"
-SPEAKER_THRESHOLD_KEY: Final = "VOICE_IN_SPEAKER_THRESHOLD"
-DUMP_WAV_DIR_KEY: Final = "VOICE_IN_DUMP_WAV"
-STANDALONE_KEY: Final = "VOICE_IN_STANDALONE"
+ASR_ENDPOINT_KEY: Final = "ARIA_ASR_ENDPOINT"
+ASR_MODEL_KEY: Final = "ARIA_ASR_MODEL"
+ASR_API_KEY_KEY: Final = "ARIA_ASR_API_KEY"
+DEVICE_KEY: Final = "ARIA_DEVICE"
+VAD_SPEECH_THRESHOLD_KEY: Final = "ARIA_VAD_SPEECH_THRESHOLD"
+VAD_TRAILING_SILENCE_FRAMES_KEY: Final = "ARIA_VAD_TRAILING_SILENCE_FRAMES"
+VAD_MAX_FRAMES_KEY: Final = "ARIA_VAD_MAX_FRAMES"
+VAD_PRE_ROLL_FRAMES_KEY: Final = "ARIA_VAD_PRE_ROLL_FRAMES"
+VAD_ENGINE_KEY: Final = "ARIA_VAD"
+VAD_THRESHOLD_KEY: Final = "ARIA_VAD_THRESHOLD"
+VAD_MIN_SPEECH_MS_KEY: Final = "ARIA_VAD_MIN_SPEECH_MS"
+ASR_LIVE_KEY: Final = "ARIA_ASR_LIVE"
+ASR_LIVE_TIMEOUT_MS_KEY: Final = "ARIA_ASR_LIVE_TIMEOUT_MS"
+ASR_LIVE_MAX_FAILURES_KEY: Final = "ARIA_ASR_LIVE_MAX_FAILURES"
+DENOISE_KEY: Final = "ARIA_DENOISE"
+SPEAKER_THRESHOLD_KEY: Final = "ARIA_SPEAKER_THRESHOLD"
+DUMP_WAV_DIR_KEY: Final = "ARIA_DUMP_WAV"
+STANDALONE_KEY: Final = "ARIA_STANDALONE"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20

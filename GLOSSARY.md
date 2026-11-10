@@ -4,7 +4,8 @@
 
 ## 基础
 
-- **语音输入模块 / voice-input**：本仓库实现的 waycast 输入模块（capability.kind = "input"），负责麦克风采集 + VAD 端点检测 + ASR 识别（+ 说话人识别），把识别结果作为 input 帧发给核心。
+- **云和 / aria**：本仓库（即树莓娘的语音输入模块）的名字，命名来历见 README 末尾「命名来历」（ADR-0013）；wire 上的模块名、CLI 命令与包名均为 `aria`，环境变量前缀 `ARIA_`。旧名 voice-input / voice_input 不再用于新设计。
+- **语音输入模块 / voice input module**：云和的职能描述（waycast 输入模块，capability.kind = "input"），负责麦克风采集 + VAD 端点检测 + ASR 识别（+ 说话人识别），把识别结果作为 input 帧发给核心。
 - **端点 / endpoint**：VAD 把一段连续语音（含尾随静音与前摇）聚合成的一个完备音频段；一个端点对应一条 input 帧。
 - **stable_prefix**：input 帧 metadata 中保持纯 ASR 文本的字段，说话人前缀只进 content，不改写该字段（ADR-0002）。
 
@@ -13,33 +14,33 @@
 - **流式路径 / live 路径**：语音在途时经 audio.cpp live 路由（`/v1/audio/transcriptions/live`）边上传裸 PCM 边收 SSE 增量文本的识别方式，为默认主路径。
 - **流式会话 / live session**：一条语音区间对应一条 live 连接：区间打开时开启并回填语音起点音频，端点产生时交给识别 worker 收尾（发终止块等最终文本或断开）。
 - **终止块 / terminating chunk**：chunked 编码里的 0 长度块，向服务端声明「说完了」；不发终止块直接断连在服务端语义里是错误而非语音结束。
-- **批量转写 / batch 回退**：端点音频整段上传的 `POST /v1/audio/transcriptions` 路径；流式失败、超时或服务端拒绝流式时按端点回退到它，`VOICE_IN_ASR_LIVE=0` 时作为唯一路径。
-- **流式路径永久关闭 / live path disabled**：连续 `VOICE_IN_ASR_LIVE_MAX_FAILURES` 次失败（或收到不支持信号）后本进程不再尝试流式，全部走批量；重启恢复。
+- **批量转写 / batch 回退**：端点音频整段上传的 `POST /v1/audio/transcriptions` 路径；流式失败、超时或服务端拒绝流式时按端点回退到它，`ARIA_ASR_LIVE=0` 时作为唯一路径。
+- **流式路径永久关闭 / live path disabled**：连续 `ARIA_ASR_LIVE_MAX_FAILURES` 次失败（或收到不支持信号）后本进程不再尝试流式，全部走批量；重启恢复。
 
 ## 端点检测（VAD，ADR-0007）
 
 - **进程内 Silero VAD / in-process Silero VAD**：随包 `silero_vad.onnx`（官方 v5
-  流式导出，MIT）直接跑在 onnxruntime 上的端点检测，为默认引擎；`VOICE_IN_VAD=
+  流式导出，MIT）直接跑在 onnxruntime 上的端点检测，为默认引擎；`ARIA_VAD=
   energy` 或模型不可用时改用能量 VAD。旧 audio.cpp HTTP 轮询路径已删除。
 - **chunk**：Silero 流式模型的固定输入单位，512 样本（32 ms @ 16 kHz）；宿主侧维
   护 64 样本 context（上一 chunk 尾部）与 `[2,1,128]` 状态张量逐 chunk 回接。
-- **滞回阈值 / hysteresis**：概率 ≥ `VOICE_IN_VAD_THRESHOLD`（默认 0.5）算语音、
+- **滞回阈值 / hysteresis**：概率 ≥ `ARIA_VAD_THRESHOLD`（默认 0.5）算语音、
   < threshold−0.15 算非语音；两阈值之间保持当前状态，句中短停顿不被误切。
 - **静音窗 / min silence**：非语音概率需连续覆盖 100 ms 才闭合句段出端点（官方
   `min_silence_duration_ms`）。
 - **语音垫 / speech pad**：端点音频在语音起止之外各外扩 150 ms（前垫覆盖 Silero
   触发滞后于真实起点的 attack latency，ADR-0010；官方 `speech_pad_ms` 默认 30 ms），
-  与 `VOICE_IN_VAD_MIN_SPEECH_MS` 的噪声过滤共同决定端点音频。
+  与 `ARIA_VAD_MIN_SPEECH_MS` 的噪声过滤共同决定端点音频。
 - **前导静音底 / lead silence floor**：端点音频与 live 语音快照头部固定的 150 ms
   数字静音；ASR 前端会吞掉无静音起头句子的首音节（实测 ≥50 ms 即恢复，ADR-0011）。
 - **能量降级 / energy degradation**：模型加载失败（构建期）或推理连续
   `MAX_VAD_FAILURES` 次失败（运行期，本连接内永久，重连或重启恢复）时改用能量
-  VAD；两者管道行为与 `VOICE_IN_VAD=energy` 完全一致。
+  VAD；两者管道行为与 `ARIA_VAD=energy` 完全一致。
 
 ## 降噪（ADR-0006）
 
 - **降噪 / speech enhancement**：采集与端点检测之间的进程内 GTCRN 流式语音增
-  强；VAD、live/批量 ASR 与说话人识别一律消费降噪后音频。`VOICE_IN_DENOISE=0`、
+  强；VAD、live/批量 ASR 与说话人识别一律消费降噪后音频。`ARIA_DENOISE=0`、
   模型不可用或被旁路时，管道消费原始麦克风音频。
 - **增强器 / enhancer**：挂在采集泵上的降噪组件（`denoise.GtcrnEnhancer`），
   输入输出都是 20ms/320 样本帧；接口为 `push_async(block) -> 若干帧`。

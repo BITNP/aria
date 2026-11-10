@@ -41,7 +41,7 @@ from typing import Any, Final, Protocol
 import numpy
 import numpy.typing as npt
 
-from voice_input.vad import FRAME_BYTES, SAMPLE_RATE_HZ
+from aria.vad import FRAME_BYTES, SAMPLE_RATE_HZ
 
 LOGGER = logging.getLogger(__name__)
 
@@ -325,13 +325,13 @@ def _validate_session(session: _DenoiseSession) -> dict[str, list[int]]:
 
 def bundled_model_path() -> Path:
     """Resolve the bundled GTCRN model file (ADR-0006: never from the environment)."""
-    return Path(str(files("voice_input.models").joinpath("gtcrn_simple.onnx")))
+    return Path(str(files("aria.models").joinpath("gtcrn_simple.onnx")))
 
 
 def build_enhancer(
     settings: Any, *, model_path: Path | None = None
 ) -> GtcrnEnhancer | None:
-    """Load the bundled model when VOICE_IN_DENOISE is on; None keeps raw audio.
+    """Load the bundled model when ARIA_DENOISE is on; None keeps raw audio.
 
     ``model_path`` is injectable for tests; production always uses the bundled
     asset via ``bundled_model_path``.  Any load failure degrades to no

@@ -12,7 +12,7 @@ from collections import deque
 
 import pytest
 
-from voice_input.speaker import (
+from aria.speaker import (
     ID_WINDOW_SAMPLES,
     MEAN_MAX_CONTRIBUTIONS,
     MIN_SPEECH_MS,

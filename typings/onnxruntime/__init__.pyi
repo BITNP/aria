@@ -1,4 +1,4 @@
-"""Minimal type stubs for the onnxruntime surface used by voice_input.
+"""Minimal type stubs for the onnxruntime surface used by aria.
 
 The installed onnxruntime wheel ships no inline types; this stub lets
 basedpyright strict check our usage of InferenceSession (speaker + denoise)

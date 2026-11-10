@@ -8,7 +8,7 @@ presenting the real graph's names/shapes/types.
 
 T2 (bundled model present, else skipped): the real model sees deterministic
 noise and produces no endpoints; an official speech wav can additionally be fed
-via VOICE_IN_SILERO_WAV to assert real segmentation.
+via ARIA_SILERO_WAV to assert real segmentation.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from typing import Any, cast
 
 import pytest
 
-from voice_input.config import ConfigError, load_settings
-from voice_input.main import build_endpointer
-from voice_input.silero_vad import (
+from aria.config import ConfigError, load_settings
+from aria.main import build_endpointer
+from aria.silero_vad import (
     MODEL_REVISION,
     SPEECH_PAD_SAMPLES,
     WINDOW_SAMPLES,
@@ -35,7 +35,7 @@ from voice_input.silero_vad import (
     build_vad_model,
     bundled_model_path,
 )
-from voice_input.vad import EndpointDetector, EnergyEndpointer, SpeechSegment
+from aria.vad import EndpointDetector, EnergyEndpointer, SpeechSegment
 
 SILENT_FRAME = b"\x00" * 640
 LOUD_FRAME = struct.pack("<320h", *([1000] * 320))
@@ -423,8 +423,8 @@ def test_runtime_state_shape_guard_rejects_mismatched_state():
 
 BASE_ENV = {
     "WAYCAST_HUB_URL": "ws://hub.test:1",
-    "VOICE_IN_ASR_ENDPOINT": "https://asr.test/v1",
-    "VOICE_IN_ASR_MODEL": "asr",
+    "ARIA_ASR_ENDPOINT": "https://asr.test/v1",
+    "ARIA_ASR_MODEL": "asr",
 }
 
 
@@ -438,14 +438,14 @@ def test_build_endpointer_defaults_to_silero_when_model_present():
 
 
 def test_build_endpointer_forces_energy():
-    endpointer = build_endpointer(load_settings({**BASE_ENV, "VOICE_IN_VAD": "energy"}))
+    endpointer = build_endpointer(load_settings({**BASE_ENV, "ARIA_VAD": "energy"}))
     asyncio.run(endpointer.aclose())
     assert endpointer.__class__.__name__ == "EnergyEndpointer"
 
 
 def test_unknown_vad_engine_is_a_config_error():
     with pytest.raises(ConfigError):
-        load_settings({**BASE_ENV, "VOICE_IN_VAD": "audio-cpp"})
+        load_settings({**BASE_ENV, "ARIA_VAD": "audio-cpp"})
 
 
 def test_build_vad_model_missing_file_degrades_to_none(tmp_path: Path):
@@ -485,11 +485,9 @@ def test_real_model_keeps_quiet_noise_endpoint_free():
 
 @_HAS_MODEL
 def test_real_model_segments_official_speech_wav():
-    path = os.environ.get("VOICE_IN_SILERO_WAV", "")
+    path = os.environ.get("ARIA_SILERO_WAV", "")
     if not path or not Path(path).is_file():
-        pytest.skip(
-            "set VOICE_IN_SILERO_WAV to a 16 kHz mono WAV for the speech fixture"
-        )
+        pytest.skip("set ARIA_SILERO_WAV to a 16 kHz mono WAV for the speech fixture")
     import numpy
 
     with wave.open(path) as source:

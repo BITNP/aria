@@ -19,8 +19,8 @@ from pathlib import Path
 import numpy
 import pytest
 
-from voice_input.fbank import extract
-from voice_input.speaker import (
+from aria.fbank import extract
+from aria.speaker import (
     ID_WINDOW_SAMPLES,
     MODEL_REVISION,
     CamppEmbedder,
@@ -31,7 +31,7 @@ from voice_input.speaker import (
 MODEL_PATH = bundled_model_path()
 pytestmark = pytest.mark.skipif(
     not MODEL_PATH.is_file(),
-    reason="bundled CAM++ model not present (src/voice_input/models/)",
+    reason="bundled CAM++ model not present (src/aria/models/)",
 )
 
 
@@ -94,8 +94,8 @@ def test_distinct_audio_mints_new_speaker():
 
 
 @pytest.mark.skipif(
-    not os.environ.get("VOICE_IN_CAMPP_SPEECH_WAV"),
-    reason="set VOICE_IN_CAMPP_SPEECH_WAV to a 16 kHz mono WAV of one continuous speaker",
+    not os.environ.get("ARIA_CAMPP_SPEECH_WAV"),
+    reason="set ARIA_CAMPP_SPEECH_WAV to a 16 kHz mono WAV of one continuous speaker",
 )
 def test_same_speaker_disjoint_segments_share_id_at_operating_point():
     """ADR-0009 regression: two disjoint 1.5 s windows of one real utterance
@@ -103,11 +103,11 @@ def test_same_speaker_disjoint_segments_share_id_at_operating_point():
     default minted a fresh id for every utterance in the field)."""
     import wave
 
-    with wave.open(os.environ["VOICE_IN_CAMPP_SPEECH_WAV"]) as reader:
+    with wave.open(os.environ["ARIA_CAMPP_SPEECH_WAV"]) as reader:
         assert reader.getframerate() == 16_000 and reader.getnchannels() == 1
         if reader.getnframes() < int(7.5 * 16_000):
             pytest.skip(
-                "VOICE_IN_CAMPP_SPEECH_WAV must be >= 7.5 s for two disjoint windows"
+                "ARIA_CAMPP_SPEECH_WAV must be >= 7.5 s for two disjoint windows"
             )
 
         def segment(seconds: float) -> bytes:

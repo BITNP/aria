@@ -53,7 +53,7 @@ from typing import Any, Final, Protocol
 import numpy
 import numpy.typing as npt
 
-from voice_input.vad import (
+from aria.vad import (
     FRAME_BYTES,
     FRAME_SAMPLES,
     SAMPLE_RATE_HZ,
@@ -435,7 +435,7 @@ def _validate_session(session: _VadSession) -> None:
 
 def bundled_model_path() -> Path:
     """Resolve the bundled Silero VAD model file (ADR-0007: never from the environment)."""
-    return Path(str(files("voice_input.models").joinpath("silero_vad.onnx")))
+    return Path(str(files("aria.models").joinpath("silero_vad.onnx")))
 
 
 def build_vad_model(model_path: Path | None = None) -> SileroVadModel | None:
@@ -443,7 +443,7 @@ def build_vad_model(model_path: Path | None = None) -> SileroVadModel | None:
 
     ``model_path`` is injectable for tests; production always uses the bundled
     asset via ``bundled_model_path``.  Any load failure degrades to energy
-    endpointing (the pipeline behaves exactly as with VOICE_IN_VAD=energy).
+    endpointing (the pipeline behaves exactly as with ARIA_VAD=energy).
     """
     path = model_path if model_path is not None else bundled_model_path()
     try:
