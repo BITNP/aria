@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import wave
+from types import SimpleNamespace
 
 from voice_input.main import (
     MAX_TEXT_LENGTH,
@@ -247,7 +248,9 @@ def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
 
         await run()
 
-    monkeypatch.setattr(main_module, "load_settings", lambda *a: object())
+    monkeypatch.setattr(
+        main_module, "load_settings", lambda *a: SimpleNamespace(standalone=False)
+    )
     monkeypatch.setattr(main_module, "_run_with_hub", flaky)
     monkeypatch.setattr(main_module, "HUB_RECONNECT_DELAY_SECONDS", 0.0)
     try:
@@ -269,3 +272,19 @@ def test_endpoint_dump_wav_carries_exact_bytes(tmp_path):
         assert wav_file.getnchannels() == 1
         assert wav_file.getframerate() == 16000
         assert wav_file.readframes(wav_file.getnframes()) == pcm
+
+
+def test_standalone_consumer_consumes_without_sending():
+    """ws=None (VOICE_IN_STANDALONE): transcripts are consumed, nothing is sent."""
+
+    async def scenario():
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait((b"\x00" * 640, 600, None))
+        worker = asyncio.create_task(
+            _recognize_and_send(None, _FakeAsr("独立模式"), None, queue, None)
+        )
+        await _drain(worker, queue, _RecorderWs())
+        return queue
+
+    q = asyncio.run(scenario())
+    assert q.empty()  # the utterance flowed through and ended in the log, not a frame

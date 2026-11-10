@@ -118,7 +118,7 @@ async def _send_one(
 
 
 async def _recognize_and_send(
-    ws: InputClient,
+    ws: InputClient | None,
     asr: OpenAICompatibleAsr,
     speaker: SpeakerIdentifier | None,
     queue: asyncio.Queue[tuple[bytes, int, LiveTranscriptStream | None]],
@@ -131,6 +131,8 @@ async def _recognize_and_send(
     after the endpoint, long before a batch upload of the same audio could
     start.  If the session failed or timed out, finish() has already closed the
     connection (freeing the server-side model lock) and we fall back to batch.
+    ``ws=None`` (standalone debug mode, VOICE_IN_STANDALONE) keeps every other
+    step identical but logs the transcript instead of sending a frame.
     """
     while True:
         pcm, speech_ms, stream = await queue.get()
@@ -179,6 +181,9 @@ async def _recognize_and_send(
             )
             if len(text) > MAX_TEXT_LENGTH:
                 LOGGER.warning("transcript too long (%d chars); dropping", len(text))
+                continue
+            if ws is None:
+                LOGGER.info("standalone: transcript not sent: %r", text)
                 continue
             await _send_one(ws, speaker, pcm, speech_ms, text=text)
             LOGGER.info("sent voice input (%d chars)", len(text))
@@ -349,6 +354,44 @@ async def _run_with_hub(settings: Any) -> None:
                 await enhancer.aclose()
 
 
+async def _run_standalone(settings: Any) -> None:
+    """Standalone debug run (VOICE_IN_STANDALONE): the full pipeline, no hub.
+
+    Capture, enhancement, endpointing, dumps (VOICE_IN_DUMP_WAV) and ASR all
+    run exactly as in production; transcripts are logged instead of sent and no
+    speaker labels are computed.  A pipeline failure ends the run (no hub
+    means no reconnect loop -- a debug run should die loudly).
+    """
+    LOGGER.warning(
+        "standalone mode: not connecting to the hub, transcripts logged only"
+    )
+    enhancer = build_enhancer(settings)
+    asr = OpenAICompatibleAsr(
+        settings.asr_endpoint,
+        settings.asr_model,
+        settings.asr_api_key,
+    )
+    queue: asyncio.Queue[tuple[bytes, int, LiveTranscriptStream | None]] = (
+        asyncio.Queue(maxsize=ENDPOINT_QUEUE_SIZE)
+    )
+    mic = PortAudioMic(device=settings.device)
+    vad = build_endpointer(settings)
+    live = build_live_asr(settings)
+    try:
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(
+                _collect(mic, enhancer, vad, queue, live, settings.dump_wav_dir)
+            )
+            tasks.create_task(_recognize_and_send(None, asr, None, queue, live))
+    finally:
+        if live is not None:
+            await live.aclose()
+        await asr.aclose()
+        await vad.aclose()
+        if enhancer is not None:
+            await enhancer.aclose()
+
+
 def build_live_asr(settings: Any) -> LiveAsrTracker | None:
     """Streaming ASR tracker when enabled; None keeps the pipeline batch-only.
 
@@ -390,6 +433,9 @@ def _reconnectable(exc: BaseException) -> bool:
 async def run() -> None:
     """Entry loop: connect to the hub with reconnection until interrupted."""
     settings = load_settings()
+    if settings.standalone:
+        await _run_standalone(settings)
+        return
     while True:
         try:
             await _run_with_hub(settings)

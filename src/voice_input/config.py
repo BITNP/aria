@@ -19,6 +19,9 @@ raw microphone audio.
 VOICE_IN_DUMP_WAV=<dir> is a debug aid: every endpoint's utterance audio (the
 exact bytes the batch ASR route uploads) is additionally written to that
 directory as a 16 kHz mono WAV for listening; unset keeps the pipeline silent.
+VOICE_IN_STANDALONE=1 is the matching debug mode: the full capture -> VAD ->
+ASR pipeline runs without ever connecting to the hub, and transcripts are only
+logged (WAYCAST_HUB_URL must still be set for validation but is unused).
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ ASR_LIVE_MAX_FAILURES_KEY: Final = "VOICE_IN_ASR_LIVE_MAX_FAILURES"
 DENOISE_KEY: Final = "VOICE_IN_DENOISE"
 SPEAKER_THRESHOLD_KEY: Final = "VOICE_IN_SPEAKER_THRESHOLD"
 DUMP_WAV_DIR_KEY: Final = "VOICE_IN_DUMP_WAV"
+STANDALONE_KEY: Final = "VOICE_IN_STANDALONE"
 
 DEFAULT_SPEECH_THRESHOLD: Final = 300
 DEFAULT_TRAILING_SILENCE_FRAMES: Final = 20
@@ -86,6 +90,7 @@ class Settings:
     denoise: bool = True
     speaker_threshold: float = DEFAULT_SPEAKER_THRESHOLD
     dump_wav_dir: str | None = None
+    standalone: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +153,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             source, SPEAKER_THRESHOLD_KEY, DEFAULT_SPEAKER_THRESHOLD
         ),
         dump_wav_dir=_optional_text(source.get(DUMP_WAV_DIR_KEY)),
+        standalone=_parse_bool(source, STANDALONE_KEY, default=False),
     )
 
 

@@ -102,3 +102,8 @@ def test_dump_wav_dir_optional():
     env = dict(VALID)
     env["VOICE_IN_DUMP_WAV"] = " /tmp/voice-in-dump "
     assert load_settings(env).dump_wav_dir == "/tmp/voice-in-dump"
+
+
+def test_standalone_defaults_off_and_overridable():
+    assert load_settings(dict(VALID)).standalone is False
+    assert load_settings({**VALID, "VOICE_IN_STANDALONE": "1"}).standalone is True

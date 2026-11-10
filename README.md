@@ -76,6 +76,7 @@ VOICE_IN_ASR_API_KEY=本地 audio.cpp 无需密钥，留空即可
 | VOICE_IN_DENOISE | GTCRN 降噪开关（默认开；设 `0` 关闭，直接用原始麦克风音频，ADR-0006） |
 | VOICE_IN_SPEAKER_THRESHOLD | 说话人复用的余弦相似度阈值（默认 0.31，真实语音工作点，ADR-0009；调高更倾向铸新 ID，调低更倾向合并） |
 | VOICE_IN_DUMP_WAV | 调试：填目录则每个端点发给 ASR 的音频额外落盘为该目录下 WAV（16 kHz 单声道，内容与批量上传逐字节一致；默认关闭不落盘） |
+| VOICE_IN_STANDALONE | 独立调试模式（默认关；设 `1` 全管线运行但不连 hub，转写只记日志不发 input 帧，可与 VOICE_IN_DUMP_WAV 搭配离线排查） |
 | VOICE_IN_LOG_LEVEL | 本模块日志级别（默认 `INFO`；设 `DEBUG` 输出端点、ASR 转写结果、说话人判定分数等调试信息） |
 | VOICE_IN_DEPS_LOG_LEVEL | 第三方依赖日志级别（默认 `WARNING`，屏蔽 websockets/httpx/asyncio/onnxruntime 噪音） |
 | WAYCAST_TLS_CA | waycast 使用私有 TLS 证书时填写 CA 证书路径 |
