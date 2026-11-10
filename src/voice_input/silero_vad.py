@@ -21,9 +21,12 @@ aborted by the tracker when ``utterance_open`` goes back to False).
 
 Frame contract: ``feed`` takes one 640-byte mic frame; chunk boundaries fall
 inside frames (LCM(320, 512) = 2560), so samples buffer across feeds.  Emitted
-utterance audio is ``[speech_start - 30 ms, end + 30 ms]`` clipped to the
-buffer; ``utterance_audio`` reports ``[speech_start - pad, fed)`` so the live
-ASR session streams exactly the bytes the endpoint will emit (the frames that
+utterance audio is ``[speech_start - 150 ms, end + 150 ms]`` clipped to the
+buffer (ADR-0010: the lead pad covers the model's attack latency -- on real
+speech ``prob >= threshold`` was measured to lag the true onset by 56..88 ms,
+so the official 30 ms pad still cut 26..58 ms into the first syllable);
+``utterance_audio`` reports ``[speech_start - pad, fed)`` so the live ASR
+session streams exactly the bytes the endpoint will emit (the frames that
 trigger a close may carry up to one chunk of trailing silence the live stream
 never saw -- silence only, which costs the transcript nothing).
 
@@ -60,9 +63,9 @@ WINDOW_SAMPLES: Final = 512  # the model's fixed chunk (32 ms @ 16 kHz)
 CONTEXT_SAMPLES: Final = 64  # previous-chunk tail prepended to every feed
 STATE_SHAPE: Final = (2, 1, 128)
 MIN_SILENCE_SAMPLES: Final = 1_600  # official min_silence_duration_ms = 100
-SPEECH_PAD_SAMPLES: Final = 480  # official speech_pad_ms = 30
+SPEECH_PAD_SAMPLES: Final = 2_400  # 150 ms, 5x the official speech_pad_ms=30 (ADR-0010)
 NEG_THRESHOLD_OFFSET: Final = 0.15  # official neg = threshold - 0.15
-RING_SAMPLES: Final = 1_600  # idle audio kept for the next onset's lead pad
+RING_SAMPLES: Final = 4_800  # idle audio kept for the next onset's lead pad (300 ms)
 DEFAULT_THRESHOLD: Final = 0.5
 MAX_VAD_FAILURES: Final = 3
 MODEL_REVISION: Final = "silero-vad-v5-onnx"
@@ -302,10 +305,10 @@ class SileroEndpointer:
             elif cur - self._speech_start >= self._max_samples:
                 # official layout: a high probability while already triggered falls
                 # through to the max-length check (min-speech filter still applies)
-                return self._close(cur)  # hard cap: cut here
+                return self._close(cur, hard_cut=True)  # hard cap: cut here
             return None
         if self._triggered and cur - self._speech_start >= self._max_samples:
-            return self._close(cur)
+            return self._close(cur, hard_cut=True)
         if self._triggered and prob < self._neg_threshold:
             if self._temp_end == 0:
                 self._temp_end = cur
@@ -314,13 +317,14 @@ class SileroEndpointer:
             return self._close(self._temp_end)
         return None  # between thresholds: hold the utterance open, timer untouched
 
-    def _close(self, end: int) -> SpeechSegment | None:
+    def _close(self, end: int, *, hard_cut: bool = False) -> SpeechSegment | None:
         start = self._speech_start
         segment: SpeechSegment | None = None
         if end - start > self._min_speech_samples:
             segment = SpeechSegment(
                 pcm16le=self._slice(
-                    max(start - SPEECH_PAD_SAMPLES, self._pcm_start), end
+                    max(start - SPEECH_PAD_SAMPLES, self._pcm_start),
+                    min(end + SPEECH_PAD_SAMPLES, self._fed),
                 ),
                 duration_ms=(end - start) // _SAMPLES_PER_MS,
             )
@@ -331,7 +335,12 @@ class SileroEndpointer:
             )
         self._reset_utterance()
         if segment is not None:
-            self._discard_before(end + SPEECH_PAD_SAMPLES)
+            # ADR-0010 boundary policy: a silence close keeps [end, end + pad) in
+            # the idle ring so the next onset's lead pad can reach back there (a
+            # resume right after min_silence never eats its speech); a mid-speech
+            # hard cap discards exactly the audio it emitted (end + pad), keeping
+            # consecutive segments contiguous without duplicating speech.
+            self._discard_before(end + SPEECH_PAD_SAMPLES if hard_cut else end)
         return segment
 
     def _reset_utterance(self) -> None:

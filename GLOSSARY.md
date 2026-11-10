@@ -27,8 +27,9 @@
   < threshold−0.15 算非语音；两阈值之间保持当前状态，句中短停顿不被误切。
 - **静音窗 / min silence**：非语音概率需连续覆盖 100 ms 才闭合句段出端点（官方
   `min_silence_duration_ms`）。
-- **语音垫 / speech pad**：端点音频在语音起止之外各外扩 30 ms（官方
-  `speech_pad_ms`），与 `VOICE_IN_VAD_MIN_SPEECH_MS` 的噪声过滤共同决定端点音频。
+- **语音垫 / speech pad**：端点音频在语音起止之外各外扩 150 ms（前垫覆盖 Silero
+  触发滞后于真实起点的 attack latency，ADR-0010；官方 `speech_pad_ms` 默认 30 ms），
+  与 `VOICE_IN_VAD_MIN_SPEECH_MS` 的噪声过滤共同决定端点音频。
 - **能量降级 / energy degradation**：模型加载失败（构建期）或推理连续
   `MAX_VAD_FAILURES` 次失败（运行期，本连接内永久，重连或重启恢复）时改用能量
   VAD；两者管道行为与 `VOICE_IN_VAD=energy` 完全一致。

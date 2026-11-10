@@ -28,6 +28,8 @@ from voice_input.config import ConfigError, load_settings
 from voice_input.main import build_endpointer
 from voice_input.silero_vad import (
     MODEL_REVISION,
+    SPEECH_PAD_SAMPLES,
+    WINDOW_SAMPLES,
     SileroEndpointer,
     SileroVadModel,
     build_vad_model,
@@ -123,7 +125,9 @@ def test_endpoint_after_speech_then_silence():
     segments, _, _ = _feed(endpointer, _frames(24))  # 15 chunks fit in 24 frames
     assert len(segments) == 1
     assert segments[0].duration_ms == 5_120 // 16  # speech span only, pads excluded
-    assert len(segments[0].pcm16le) == 5_120 * 2  # start pad clamps at buffer head
+    # ADR-0010: start pad clamps at the buffer head, trailing pad extends to
+    # min(end + 2400, fed) = 7520 samples
+    assert len(segments[0].pcm16le) == (5_120 + 2_400) * 2
     assert endpointer.utterance_open is False
 
 
@@ -227,7 +231,58 @@ def test_idle_buffer_stays_bounded():
     model = ScriptedModel()  # all silence
     endpointer = _endpointer(model)
     _feed(endpointer, _frames(400))
-    assert len(endpointer._pcm) <= (1_600 + 640) * 2
+    # the ring keeps at most the lead-pad reach plus the not-yet-consumed tail
+    assert len(endpointer._pcm) <= (SPEECH_PAD_SAMPLES + WINDOW_SAMPLES) * 2
+
+
+# ---- T1: lead pad and close-boundary policy (ADR-0010) ---------------------------
+
+
+def test_lead_pad_recovers_pre_trigger_audio():
+    # silence before the trigger is recovered up to the 150 ms lead pad: trigger
+    # at chunk 8 (sample 4096) -> emitted audio starts at 4096 - 2400; the
+    # silence close extends to end + pad.
+    model = ScriptedModel([0.05] * 8 + [0.9] * 8 + [0.05] * 5)
+    endpointer = _endpointer(model)
+    segments, _, snapshot = _feed(endpointer, _frames(34), capture_open=True)
+    assert len(segments) == 1
+    # [4096 - 2400, 8192 + 2400) = 8896 samples
+    assert len(segments[0].pcm16le) == 8_896 * 2
+    assert segments[0].duration_ms == 4_096 // 16
+    assert snapshot is not None
+    assert segments[0].pcm16le.startswith(snapshot)  # live lockstep kept
+
+
+def test_silence_close_keeps_lead_pad_after_previous_end():
+    # resume right after min_silence: a silence close discards only up to its
+    # end, so the second utterance's lead pad reaches back to sample 4256
+    # (past the previous end at 4096) and the resumed onset is fully covered.
+    model = ScriptedModel([0.9] * 8 + [0.05] * 5 + [0.9] * 8 + [0.05] * 5)
+    endpointer = _endpointer(model)
+    segments, _, _ = _feed(endpointer, _frames(42))
+    assert len(segments) == 2
+    first, second = segments
+    # first: [0, 4096 + 2400); second: [max(6656 - 2400, 4096), 10752 + 2400)
+    assert len(first.pcm16le) == (4_096 + 2_400) * 2
+    assert len(second.pcm16le) == (10_752 + 2_400 - 4_256) * 2
+    assert first.duration_ms == second.duration_ms == 4_096 // 16
+
+
+def test_hard_cap_close_is_contiguous():
+    # mid-speech max_frames cap: the emitted trailing pad is discarded with the
+    # close, so the next segment starts exactly where the capped one ended --
+    # contiguous, no gap, no duplicated speech.
+    model = ScriptedModel([0.9] * 20 + [0.05] * 8)
+    endpointer = _endpointer(model, max_frames=16)  # 5120-sample cap
+    segments, _, _ = _feed(endpointer, _frames(40))
+    assert len(segments) == 2
+    first, second = segments
+    assert first.duration_ms == 5_120 // 16
+    # the resumed stretch hits its own cap at chunk 21 before silence closes it
+    assert second.duration_ms == (10_752 - 5_632) // 16
+    # first: [0, min(5120 + 2400, 5760)); second: [5760, min(10752 + 2400, 11520))
+    assert len(first.pcm16le) == 5_760 * 2
+    assert len(second.pcm16le) == (11_520 - 5_760) * 2
 
 
 # ---- T1: strict graph validation ---------------------------------------------------

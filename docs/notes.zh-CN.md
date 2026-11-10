@@ -58,7 +58,8 @@
   src/voice_input/models/）。
 - 图签名实测：input [1,576]（64 context+512 chunk，宿主维护 context）、state
   [2,1,128] 回接、sr int64 标量；输出概率 [1,1]+状态。动态维图 → 运行时形状守卫。
-  后处理按官方 utils_vad 流式化：滞回 0.5/0.35、min_silence 100ms、pad 30ms、
+  后处理按官方 utils_vad 流式化：滞回 0.5/0.35、min_silence 100ms、pad 150ms
+  （ADR-0010，官方默认 30ms 的前垫加强）、
   min_speech 沿用 250ms（严格大于）；官方纯 Python 后处理做 oracle 在官方
   tests/data/test.wav 上验证复刻前端（19 段）。
 - 实现：silero_vad.py 原地重写（SileroVadModel + SileroEndpointer，
