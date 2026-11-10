@@ -82,8 +82,8 @@ class IdentitySession:
 
     def run(
         self,
-        output_names: "Sequence[str] | None",
-        input_feed: "Mapping[str, object]",
+        output_names: Sequence[str] | None,
+        input_feed: Mapping[str, object],
         run_options: object | None = None,
     ) -> list[Any]:
         self.hop_calls += 1

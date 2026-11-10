@@ -257,7 +257,7 @@ def build_speaker_identifier(
     path = model_path if model_path is not None else bundled_model_path()
     try:
         embedder = CamppEmbedder(path, providers=providers)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 加载失败（模型/依赖/设备任意原因）一律降级为无说话人识别模式
         LOGGER.warning(
             "speaker identification load failed (%s); degraded to no-ID mode", exc
         )
@@ -329,18 +329,18 @@ def _preferred_providers(
 
 
 __all__ = [
-    "MIN_SPEECH_MS",
+    "AMBIGUITY_GAP",
+    "DEFAULT_REUSE_THRESHOLD",
     "ID_WINDOW_MS",
     "ID_WINDOW_SAMPLES",
-    "DEFAULT_REUSE_THRESHOLD",
-    "AMBIGUITY_GAP",
     "MEAN_MAX_CONTRIBUTIONS",
+    "MIN_SPEECH_MS",
     "MODEL_REVISION",
-    "Embedding",
-    "Embedder",
     "CamppEmbedder",
+    "Embedder",
+    "Embedding",
     "SpeakerIdentifier",
-    "bundled_model_path",
     "build_speaker_identifier",
+    "bundled_model_path",
     "disabled_status",
 ]

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol
 
 from voice_input.vad import FRAME_BYTES, FRAME_SAMPLES, SAMPLE_RATE_HZ
 
@@ -120,4 +121,4 @@ class PortAudioMic(MicReader):
             self._stream = None
 
 
-__all__ = ["PortAudioMic", "MicReader", "RawBlock", "RawBlockReader"]
+__all__ = ["MicReader", "PortAudioMic", "RawBlock", "RawBlockReader"]

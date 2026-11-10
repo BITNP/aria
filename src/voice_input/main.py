@@ -119,7 +119,7 @@ async def _recognize_and_send(
     ws: InputClient,
     asr: OpenAICompatibleAsr,
     speaker: SpeakerIdentifier | None,
-    queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"],
+    queue: asyncio.Queue[tuple[bytes, int, LiveTranscriptStream | None]],
     live: LiveAsrTracker | None,
 ) -> None:
     """Consume endpoints from the queue: transcribe and forward one input frame per utterance.
@@ -217,7 +217,7 @@ async def _collect(
     mic: PortAudioMic,
     enhancer: Enhancer | None,
     vad: Endpointer,
-    queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"],
+    queue: asyncio.Queue[tuple[bytes, int, LiveTranscriptStream | None]],
     live: LiveAsrTracker | None = None,
 ) -> None:
     """Read mic blocks, run endpoint detection, and push complete utterances to the queue.
@@ -289,7 +289,7 @@ async def _run_with_hub(settings: Any) -> None:
             settings.asr_model,
             settings.asr_api_key,
         )
-        queue: asyncio.Queue["tuple[bytes, int, LiveTranscriptStream | None]"] = (
+        queue: asyncio.Queue[tuple[bytes, int, LiveTranscriptStream | None]] = (
             asyncio.Queue(maxsize=ENDPOINT_QUEUE_SIZE)
         )
         mic = PortAudioMic(device=settings.device)
@@ -352,7 +352,7 @@ async def run() -> None:
     while True:
         try:
             await _run_with_hub(settings)
-        except BaseException as exc:  # noqa: BLE001 - filter, don't swallow
+        except BaseException as exc:
             # A dropped hub surfaces wrapped: TaskGroup raises the read/send
             # failures as an ExceptionGroup, which except-clauses on the
             # wrapped types never match.
@@ -375,4 +375,4 @@ def main() -> None:
         pass
 
 
-__all__ = ["main", "run", "MODULE_NAME"]
+__all__ = ["MODULE_NAME", "main", "run"]

@@ -8,7 +8,9 @@ SSE parsing are exercised end to end over a real socket.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+from typing import Self
 
 import pytest
 
@@ -106,7 +108,7 @@ class ScriptedLiveServer:
         port = self.server.sockets[0].getsockname()[1]
         return f"http://127.0.0.1:{port}/v1/audio/transcriptions/live"
 
-    async def __aenter__(self) -> "ScriptedLiveServer":
+    async def __aenter__(self) -> Self:
         self.server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
         return self
 
@@ -135,10 +137,8 @@ class ScriptedLiveServer:
                 pass  # 客户端中途断开：脚本侧的 send 失败属预期
             await body_task
         finally:
-            try:
+            with contextlib.suppress(Exception):  # cleanup is best effort
                 writer.close()
-            except Exception:  # noqa: BLE001 - cleanup is best effort
-                pass
 
     async def _read_body(self, conn: Conn) -> None:
         reader = conn.reader

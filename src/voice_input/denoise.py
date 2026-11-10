@@ -356,13 +356,13 @@ def build_enhancer(
 
 
 __all__ = [
-    "N_FFT",
     "HOP_SAMPLES",
-    "MODEL_REVISION",
     "MAX_ENHANCE_FAILURES",
+    "MODEL_REVISION",
+    "N_FFT",
+    "SAMPLE_RATE_HZ",
     "Enhancer",
     "GtcrnEnhancer",
-    "bundled_model_path",
     "build_enhancer",
-    "SAMPLE_RATE_HZ",
+    "bundled_model_path",
 ]

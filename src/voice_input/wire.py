@@ -85,4 +85,4 @@ def parse_frame(raw: str | bytes | dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-__all__ = ["PROTOCOL_VERSION", "WireError", "make_frame", "dumps", "parse_frame"]
+__all__ = ["PROTOCOL_VERSION", "WireError", "dumps", "make_frame", "parse_frame"]

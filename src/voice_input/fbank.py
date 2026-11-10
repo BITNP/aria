@@ -91,7 +91,7 @@ def _hz_to_mel(value: float) -> float:
 
 
 __all__ = [
-    "SAMPLE_RATE_HZ",
     "NUM_BINS",
+    "SAMPLE_RATE_HZ",
     "extract",
 ]

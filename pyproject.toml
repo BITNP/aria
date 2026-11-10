@@ -60,8 +60,7 @@ line-length = 88
 src = ["src", "tests"]
 exclude = ["typings"]
 
-[tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+# lint 规则集 = ruff 内置默认（四仓一致，不另选规则族；生效规则集由 uv.lock 钉死的 ruff 版本决定）。
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = []

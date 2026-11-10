@@ -208,4 +208,4 @@ def _parse_int(
     return value
 
 
-__all__ = ["Settings", "ConfigError", "load_settings"]
+__all__ = ["ConfigError", "Settings", "load_settings"]

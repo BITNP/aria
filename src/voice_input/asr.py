@@ -127,7 +127,7 @@ def _parse_recognition(value: object) -> Recognition:
 
 
 __all__ = [
-    "Recognition",
-    "OpenAICompatibleAsr",
     "MAX_RESPONSE_BYTES",
+    "OpenAICompatibleAsr",
+    "Recognition",
 ]

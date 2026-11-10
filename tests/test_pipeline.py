@@ -40,7 +40,7 @@ def test_labeled_utterance_prefixes_content_but_not_stable_prefix():
 
     ws = asyncio.run(scenario())
     assert len(ws.sent) == 1
-    content, source, metadata = ws.sent[0]
+    content, _source, metadata = ws.sent[0]
     assert content == "【说话人spk_1】你好"
     assert metadata["stable_prefix"] == "你好"
     assert metadata["speech_duration_ms"] == 600
@@ -115,7 +115,7 @@ class _StubTracker:
 
 
 async def _drain(
-    worker: "asyncio.Task[None]", queue: "asyncio.Queue[object]", ws: _RecorderWs
+    worker: asyncio.Task[None], queue: asyncio.Queue[object], ws: _RecorderWs
 ) -> None:
     for _ in range(100):
         if queue.empty():

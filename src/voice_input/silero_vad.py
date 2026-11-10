@@ -432,16 +432,16 @@ def build_vad_model(model_path: Path | None = None) -> SileroVadModel | None:
 
 
 __all__ = [
-    "VadModel",
-    "SileroVadModel",
+    "CONTEXT_SAMPLES",
+    "DEFAULT_THRESHOLD",
+    "MAX_VAD_FAILURES",
+    "MIN_SILENCE_SAMPLES",
+    "MODEL_REVISION",
+    "SPEECH_PAD_SAMPLES",
+    "WINDOW_SAMPLES",
     "SileroEndpointer",
+    "SileroVadModel",
+    "VadModel",
     "build_vad_model",
     "bundled_model_path",
-    "WINDOW_SAMPLES",
-    "CONTEXT_SAMPLES",
-    "MIN_SILENCE_SAMPLES",
-    "SPEECH_PAD_SAMPLES",
-    "MAX_VAD_FAILURES",
-    "DEFAULT_THRESHOLD",
-    "MODEL_REVISION",
 ]

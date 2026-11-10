@@ -198,13 +198,13 @@ def wav_bytes(pcm16le: bytes) -> bytes:
 
 
 __all__ = [
+    "FRAME_BYTES",
+    "FRAME_SAMPLES",
+    "SAMPLE_RATE_HZ",
+    "EndpointDetector",
+    "Endpointer",
+    "EnergyEndpointer",
     "SpeechEndpoint",
     "SpeechSegment",
-    "EndpointDetector",
-    "EnergyEndpointer",
-    "Endpointer",
-    "SAMPLE_RATE_HZ",
-    "FRAME_SAMPLES",
-    "FRAME_BYTES",
     "wav_bytes",
 ]

@@ -24,6 +24,7 @@ send(request, stream=True) 的响应均挤在上传结束后一次性到达，�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -36,8 +37,8 @@ LOGGER = logging.getLogger(__name__)
 
 __all__ = [
     "LiveAsrError",
-    "LiveAsrUnsupported",
     "LiveAsrTracker",
+    "LiveAsrUnsupported",
     "LiveTranscriptStream",
     "live_url_for",
 ]
@@ -147,7 +148,7 @@ class LiveTranscriptStream:
         sample_rate: int,
         channels: int = 1,
         connector: Connector | None = None,
-    ) -> "LiveTranscriptStream":
+    ) -> LiveTranscriptStream:
         """建立会话并等待 2xx；模型加载完成的信号就是响应头到达。"""
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.netloc:
@@ -164,7 +165,7 @@ class LiveTranscriptStream:
             request_head = (
                 f"POST {path} HTTP/1.1\r\nHost: {parts.netloc}\r\n"
                 f"Transfer-Encoding: chunked\r\nAccept: text/event-stream\r\n\r\n"
-            ).encode("utf-8")
+            ).encode()
             writer.write(request_head)
             await writer.drain()
             status_line = await asyncio.wait_for(reader.readline(), timeout=120.0)
@@ -202,10 +203,8 @@ class LiveTranscriptStream:
                     )  # 并发占用：瞬时，不计失败
                 raise LiveAsrError(f"live open failed: HTTP {status}: {message}")
         except BaseException:
-            try:
+            with contextlib.suppress(Exception):  # 清理尽力而为
                 writer.close()
-            except Exception:  # noqa: BLE001 - 清理尽力而为
-                pass
             raise
         return cls(reader, writer, label=f"asr:{model}")
 
@@ -236,7 +235,7 @@ class LiveTranscriptStream:
             if self._final is None:
                 raise LiveAsrError("live stream ended without a done event")
             return self._final
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise LiveAsrError(f"live finish timed out after {timeout}s") from exc
         finally:
             await self._shutdown()
@@ -330,10 +329,8 @@ class LiveTranscriptStream:
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        try:
+        with contextlib.suppress(Exception):  # 关闭尽力而为
             self._writer.close()
-        except Exception:  # noqa: BLE001 - 关闭尽力而为
-            pass
 
 
 class LiveAsrTracker:
