@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass
 from typing import cast
 
-import httpx
+import httpx2
 
 from voice_input.vad import wav_bytes as _wav_bytes
 
@@ -35,7 +35,7 @@ class OpenAICompatibleAsr:
     """Small OpenAI-compatible transcription client.
 
     ``endpoint`` is the provider base URL (e.g. https://asr.example.test/v1); the path
-    /audio/transcriptions is appended by this adapter.  Pass an injected httpx.AsyncClient
+    /audio/transcriptions is appended by this adapter.  Pass an injected httpx2.AsyncClient
     in tests to avoid real network I/O; when one is injected it is not closed here.
     """
 
@@ -45,7 +45,7 @@ class OpenAICompatibleAsr:
         model: str,
         api_key: str | None = None,
         *,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
     ) -> None:
         self._url = endpoint.rstrip('/') + '/audio/transcriptions'
         self._model = model
@@ -77,7 +77,7 @@ class OpenAICompatibleAsr:
                     if len(body) > MAX_RESPONSE_BYTES:
                         LOGGER.warning("batch asr response exceeds %d bytes", MAX_RESPONSE_BYTES)
                         return Recognition("")
-        except (httpx.HTTPError, OSError) as exc:
+        except (httpx2.HTTPError, OSError) as exc:
             LOGGER.warning("batch asr request failed: %s: %s", type(exc).__name__, exc)
             return Recognition("")
         try:
@@ -92,12 +92,12 @@ class OpenAICompatibleAsr:
             await self._client.aclose()
 
 
-def _default_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
+def _default_client() -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(
         # 8s 上限：正常批量转写 <1.5s（RTF 0.14），但若音频.cpp 的 live 会话正持有
         # 单实例模型锁，批量请求会被服务端排队挂住——短超时让消费 worker 快速失败
         # 恢复，避免拖垮端点队列（实测挂 15s 时 queue full 成片）。
-        timeout=httpx.Timeout(8.0),
+        timeout=httpx2.Timeout(8.0),
         follow_redirects=False,
         trust_env=False,
     )

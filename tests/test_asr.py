@@ -5,13 +5,13 @@ import asyncio
 import wave
 from io import BytesIO
 
-import httpx
+import httpx2
 
 from voice_input.asr import OpenAICompatibleAsr, _wav_bytes
 from voice_input.vad import SAMPLE_RATE_HZ
 
 
-class _FakeTransport(httpx.AsyncBaseTransport):
+class _FakeTransport(httpx2.AsyncBaseTransport):
     def __init__(self, handler):
         self._handler = handler
 
@@ -23,10 +23,10 @@ def _client_text(text, status=200):
     async def handler(request):
         assert request.url.path.endswith("/audio/transcriptions")
         if status != 200:
-            return httpx.Response(status, text="boom")
-        return httpx.Response(200, json={"text": text})
+            return httpx2.Response(status, text="boom")
+        return httpx2.Response(200, json={"text": text})
 
-    return httpx.AsyncClient(transport=_FakeTransport(handler))
+    return httpx2.AsyncClient(transport=_FakeTransport(handler))
 
 
 def _run(coro):
@@ -50,9 +50,9 @@ def test_transcribe_ok():
 
 def test_transcribe_with_confidence():
     async def handler(request):
-        return httpx.Response(200, json={"text": "ok", "confidence": 0.9})
+        return httpx2.Response(200, json={"text": "ok", "confidence": 0.9})
 
-    client = httpx.AsyncClient(transport=_FakeTransport(handler))
+    client = httpx2.AsyncClient(transport=_FakeTransport(handler))
 
     async def scenario():
         asr = OpenAICompatibleAsr("https://asr.example/v1", "whisper", client=client)
@@ -81,9 +81,9 @@ def test_transcribe_http_error_returns_empty():
 
 def test_transcribe_bad_json_returns_empty():
     async def handler(request):
-        return httpx.Response(200, text="not json")
+        return httpx2.Response(200, text="not json")
 
-    client = httpx.AsyncClient(transport=_FakeTransport(handler))
+    client = httpx2.AsyncClient(transport=_FakeTransport(handler))
 
     async def scenario():
         asr = OpenAICompatibleAsr("https://asr.example/v1", "whisper", client=client)
