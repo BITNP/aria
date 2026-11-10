@@ -8,7 +8,7 @@ identification all consume the cleaned signal (the enhancer hook in
 
 The bundled model (``models/gtcrn_simple.onnx``) is the official streaming
 export of GTCRN (ICASSP 2024, MIT, github.com/Xiaobin-Rong/gtcrn), re-hosted by
-sherpa-onnx with metadata (sha256 pinned in the README). The graph consumes one
+sherpa-onnx with metadata (sha256 pinned in DEVELOPMENT.md). The graph consumes one
 STFT frame at a time -- ``mix [1, 257, 1, 2]`` float32 real/imag pairs from a
 512-point, 256-hop sqrt-Hann STFT -- plus three state caches that are fed back
 on every call; the STFT/ISTFT and overlap-add live here, mirroring sherpa-onnx's
