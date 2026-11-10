@@ -4,6 +4,7 @@ The fake embedder is test-only (placed in tests/ per workspace rule); the real
 CAM++ model is exercised separately in test_campp.py (T2, skipped when the
 bundled model is absent).
 """
+
 from __future__ import annotations
 
 import math
@@ -95,7 +96,9 @@ def test_boundary_cosine_just_below_threshold_mints():
 def test_reuse_threshold_is_configurable():
     # A strict threshold (the old default) rejects cos ~ 0.921; the default
     # operating point accepts it.
-    strict = SpeakerIdentifier(_FakeEmbedder([_unit(0.0), _unit(0.40)]), reuse_threshold=0.95)
+    strict = SpeakerIdentifier(
+        _FakeEmbedder([_unit(0.0), _unit(0.40)]), reuse_threshold=0.95
+    )
     assert strict.identify(b"a", 600) == "spk_1"
     assert strict.identify(b"b", 600) == "spk_2"
     lenient = _identifier(_unit(0.0), _unit(0.40))

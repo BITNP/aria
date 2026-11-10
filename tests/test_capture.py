@@ -1,4 +1,5 @@
 """Capture seam: injected reader drives the mic without a real device."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +39,9 @@ def test_open_noop_with_injected_reader():
     asyncio.run(scenario())
 
 
-def test_open_uses_stream_without_injected_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_open_uses_stream_without_injected_reader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Regression: bound-method identity made _injected() always True, so
     open() skipped stream creation and the first read_block asserted."""
 

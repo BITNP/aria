@@ -1,4 +1,5 @@
 """Pipeline wiring tests: speaker prefixing, degraded no-ID mode, fault tolerance."""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +11,9 @@ class _RecorderWs:
     def __init__(self) -> None:
         self.sent: list[tuple[str, str, dict]] = []
 
-    async def send_input(self, content: str, *, source: str, metadata: dict[str, object]) -> None:
+    async def send_input(
+        self, content: str, *, source: str, metadata: dict[str, object]
+    ) -> None:
         self.sent.append((content, source, metadata))
 
 
@@ -111,7 +114,9 @@ class _StubTracker:
             self.discarded.append(stream)
 
 
-async def _drain(worker: "asyncio.Task[None]", queue: "asyncio.Queue[object]", ws: _RecorderWs) -> None:
+async def _drain(
+    worker: "asyncio.Task[None]", queue: "asyncio.Queue[object]", ws: _RecorderWs
+) -> None:
     for _ in range(100):
         if queue.empty():
             break

@@ -9,6 +9,7 @@ microservices that talk only over the network and share no Python package.
 This module is input-only: it never receives output_unit frames and holds no core
 logic; turn-taking decisions belong to the core Agent (ADR-0011).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -138,7 +139,12 @@ class InputClient:
                         request_id=frame["request_id"],
                     )
                     await self._send_text(dumps(reply))
-        except (WebSocketDisconnect, WebSocketNetworkError, ConnectionError, OSError) as exc:
+        except (
+            WebSocketDisconnect,
+            WebSocketNetworkError,
+            ConnectionError,
+            OSError,
+        ) as exc:
             self._dropped = exc
             LOGGER.debug("hub connection closed (status reader)")
         except Exception as exc:
@@ -168,7 +174,12 @@ class InputClient:
         self._exit_stack.push_async_callback(client.aclose)
         try:
             self._ws = await self._exit_stack.enter_async_context(client.websocket(uri))
-        except (WebSocketUpgradeError, WebSocketNetworkError, httpx2.HTTPError, OSError) as exc:
+        except (
+            WebSocketUpgradeError,
+            WebSocketNetworkError,
+            httpx2.HTTPError,
+            OSError,
+        ) as exc:
             await self._exit_stack.aclose()
             self._exit_stack = None
             raise HubConnectionError(f"cannot reach hub at {uri}: {exc}") from exc
@@ -178,9 +189,7 @@ class InputClient:
             )
             ack = parse_frame(await self._ws.receive_text())
             if ack["type"] != "capability" or not ack["payload"].get("accepted"):
-                raise HubConnectionError(
-                    f"hub did not accept capability: {dumps(ack)}"
-                )
+                raise HubConnectionError(f"hub did not accept capability: {dumps(ack)}")
         except HubConnectionError:
             await self._shutdown_ws()
             raise

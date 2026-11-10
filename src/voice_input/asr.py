@@ -8,6 +8,7 @@ An empty Recognition (text == "") is produced on any transport, HTTP, or decode 
 so the pipeline can drop the utterance without raising; the caller decides whether an
 empty result is worth forwarding (it never is).
 """
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,7 @@ class OpenAICompatibleAsr:
         *,
         client: httpx2.AsyncClient | None = None,
     ) -> None:
-        self._url = endpoint.rstrip('/') + '/audio/transcriptions'
+        self._url = endpoint.rstrip("/") + "/audio/transcriptions"
         self._model = model
         self._api_key = api_key
         self._client = client if client is not None else _default_client()
@@ -57,7 +58,10 @@ class OpenAICompatibleAsr:
         """Transcribe one utterance, returning an empty Recognition on any failure."""
         wav = _wav_bytes(pcm16le)
         LOGGER.debug(
-            "batch asr request: %d bytes audio -> %s model=%s", len(pcm16le), self._url, self._model
+            "batch asr request: %d bytes audio -> %s model=%s",
+            len(pcm16le),
+            self._url,
+            self._model,
         )
         headers: dict[str, str] = {}
         if self._api_key:
@@ -75,7 +79,9 @@ class OpenAICompatibleAsr:
                 async for chunk in response.aiter_bytes():
                     body.extend(chunk)
                     if len(body) > MAX_RESPONSE_BYTES:
-                        LOGGER.warning("batch asr response exceeds %d bytes", MAX_RESPONSE_BYTES)
+                        LOGGER.warning(
+                            "batch asr response exceeds %d bytes", MAX_RESPONSE_BYTES
+                        )
                         return Recognition("")
         except (httpx2.HTTPError, OSError) as exc:
             LOGGER.warning("batch asr request failed: %s: %s", type(exc).__name__, exc)

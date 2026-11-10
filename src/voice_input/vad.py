@@ -10,6 +10,7 @@ trailing_silence_frames consecutive non-speech frames or when max_frames is reac
 No partial/final semantics exist here: the module decides when a turn is complete and
 every emitted endpoint becomes one waycast input frame (ADR-0011).
 """
+
 from __future__ import annotations
 
 import wave
@@ -21,6 +22,7 @@ from typing import Final, Protocol
 SAMPLE_RATE_HZ: Final = 16_000
 FRAME_SAMPLES: Final = 320  # 20 ms at 16 kHz
 FRAME_BYTES: Final = 640  # 320 int16 samples = 640 bytes
+
 
 @dataclass(frozen=True, slots=True)
 class SpeechEndpoint:

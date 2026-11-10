@@ -17,6 +17,7 @@ never backs up the microphone path; when the queue is full a new endpoint is
 dropped and logged, matching the backpressure contract of the hub (ADR-0006
 for inputs).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,7 +79,9 @@ def configure_logging() -> None:
     """本模块日志级别走 VOICE_IN_LOG_LEVEL（默认 INFO），依赖库走
     VOICE_IN_DEPS_LOG_LEVEL（默认 WARNING）。"""
     level = os.environ.get(LOG_LEVEL_KEY, "INFO").strip().upper() or "INFO"
-    deps_level = os.environ.get(DEPS_LOG_LEVEL_KEY, "WARNING").strip().upper() or "WARNING"
+    deps_level = (
+        os.environ.get(DEPS_LOG_LEVEL_KEY, "WARNING").strip().upper() or "WARNING"
+    )
     logging.basicConfig(level=level, format=_LOG_FORMAT)
     for name in _THIRD_PARTY_LOGGERS:
         logging.getLogger(name).setLevel(deps_level)
@@ -102,7 +105,9 @@ async def _send_one(
         try:
             spk = speaker.identify(pcm, speech_ms)
         except Exception:
-            LOGGER.warning("speaker identification failed; sending unlabeled", exc_info=True)
+            LOGGER.warning(
+                "speaker identification failed; sending unlabeled", exc_info=True
+            )
         else:
             if spk is not None:
                 content = f"【说话人{spk}】{text}"
@@ -233,7 +238,9 @@ async def _collect(
             block = await mic.read_block()
             if block is None:
                 break
-            frames = await enhancer.push_async(block) if enhancer is not None else (block,)
+            frames = (
+                await enhancer.push_async(block) if enhancer is not None else (block,)
+            )
             for frame in frames:
                 segment = await vad.feed(frame, timestamp)
                 timestamp = (timestamp + 320) % (1 << 32)
@@ -266,7 +273,9 @@ async def _run_with_hub(settings: Any) -> None:
     def status_provider() -> dict[str, object]:
         base = speaker.status() if speaker is not None else disabled_status()
         base["denoise_enabled"] = enhancer is not None and enhancer.model_active
-        base["denoise_model_revision"] = enhancer.model_revision if enhancer is not None else None
+        base["denoise_model_revision"] = (
+            enhancer.model_revision if enhancer is not None else None
+        )
         return base
 
     async with InputClient(
@@ -309,7 +318,11 @@ def build_live_asr(settings: Any) -> LiveAsrTracker | None:
     """
     if not settings.asr_live:
         return None
-    LOGGER.info("live ASR enabled: %s model=%s", live_url_for(settings.asr_endpoint), settings.asr_model)
+    LOGGER.info(
+        "live ASR enabled: %s model=%s",
+        live_url_for(settings.asr_endpoint),
+        settings.asr_model,
+    )
     return LiveAsrTracker(
         url=live_url_for(settings.asr_endpoint),
         model=settings.asr_model,

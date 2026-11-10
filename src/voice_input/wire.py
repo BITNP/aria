@@ -11,6 +11,7 @@ the same envelope:
   module -> hub: capability advertisement (first frame), then input frames
   hub -> module: capability acknowledgement, later output/result frames
 """
+
 from __future__ import annotations
 
 import json
@@ -85,4 +86,3 @@ def parse_frame(raw: str | bytes | dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = ["PROTOCOL_VERSION", "WireError", "make_frame", "dumps", "parse_frame"]
-

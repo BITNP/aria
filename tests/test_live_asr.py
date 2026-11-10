@@ -4,6 +4,7 @@ The fake server speaks the real audio.cpp live wire contract (chunked request
 body, SSE response events, terminating chunk) so the client's HTTP framing and
 SSE parsing are exercised end to end over a real socket.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +27,9 @@ FRAME = b"\x01\x02" * 320  # one 20 ms 16 kHz mono frame
 class Conn:
     """One accepted connection: parsed request side plus scripted send helpers."""
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self.reader = reader
         self.writer = writer
         self.request_line = ""
@@ -71,7 +74,7 @@ class Conn:
     def send_event_fragmented(self, payload: str, size: int) -> None:
         data = f"data: {payload}\n\n".encode()
         for start in range(0, len(data), size):  # tiny chunks: split across reads
-            piece = data[start:start + size]
+            piece = data[start : start + size]
             self.writer.write(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
 
     def send_done_marker(self) -> None:
@@ -79,7 +82,9 @@ class Conn:
         self.writer.write(b"0\r\n\r\n")
 
     def send_error_body(self, status: int, message: str) -> None:
-        body = json.dumps({"error": {"message": message, "type": "invalid_request_error"}})
+        body = json.dumps(
+            {"error": {"message": message, "type": "invalid_request_error"}}
+        )
         self.writer.write(
             f"HTTP/1.1 {status} Bad Request\r\ncontent-type: application/json\r\n"
             f"content-length: {len(body)}\r\n\r\n{body}".encode()
@@ -110,7 +115,9 @@ class ScriptedLiveServer:
         self.server.close()
         await self.server.wait_closed()
 
-    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         conn = Conn(reader, writer)
         self.conns.append(conn)
         try:
@@ -237,7 +244,9 @@ async def _error_event(server: ScriptedLiveServer, conn: Conn) -> None:
     conn.send_head()
     await conn.wait_body(640)
     conn.send_event(
-        json.dumps({"type": "error", "error": {"message": "stalled: no audio received"}})
+        json.dumps(
+            {"type": "error", "error": {"message": "stalled: no audio received"}}
+        )
     )
 
 
@@ -273,7 +282,8 @@ def test_finish_timeout_raises_and_abandons_connection() -> None:
 
 async def _reject_model(server: ScriptedLiveServer, conn: Conn) -> None:
     conn.send_error_body(
-        400, "live transcription requires a model configured with mode=streaming: batch-asr"
+        400,
+        "live transcription requires a model configured with mode=streaming: batch-asr",
     )
     await asyncio.sleep(0)
 
@@ -291,7 +301,10 @@ async def _busy_error_event(server: ScriptedLiveServer, conn: Conn) -> None:
     conn.send_head()
     conn.send_event(
         json.dumps(
-            {"type": "error", "error": {"message": "model 'asr' is busy: timed out after 0 ms"}}
+            {
+                "type": "error",
+                "error": {"message": "model 'asr' is busy: timed out after 0 ms"},
+            }
         )
     )
     await asyncio.sleep(0)
@@ -392,7 +405,9 @@ async def _immediate_error(server: ScriptedLiveServer, conn: Conn) -> None:
     """Error before any audio matters (e.g. busy timeout): tracker must fall back."""
     conn.send_head()
     conn.send_event(
-        json.dumps({"type": "error", "error": {"message": "stalled: no audio received"}})
+        json.dumps(
+            {"type": "error", "error": {"message": "stalled: no audio received"}}
+        )
     )
     await asyncio.sleep(0)
 
@@ -444,6 +459,7 @@ def test_tracker_disabled_by_config_stays_silent() -> None:
 
 def test_tracker_opens_at_most_once_per_utterance() -> None:
     """开流失败（连接被拒）时不得逐帧重试：一段语音只试一次，失败计一次。"""
+
     async def scenario() -> None:
         tracker = _tracker("http://127.0.0.1:1/live")
         vad = _FakeVad()

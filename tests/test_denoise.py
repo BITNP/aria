@@ -9,6 +9,7 @@ T2 (bundled model present, else skipped): noise-only attenuation and
 speech-like preservation through the real model on deterministic synthetic
 audio.  An official noisy wav can additionally be fed via VOICE_IN_GTCRN_WAV.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -205,7 +206,10 @@ def test_wrong_metadata_is_rejected():
 
 
 def test_wrong_graph_io_is_rejected():
-    broken = [_Node("mix", shape=[1, 256, 1, 2]), *[_Node(name) for name in INPUT_NAMES[1:]]]
+    broken = [
+        _Node("mix", shape=[1, 256, 1, 2]),
+        *[_Node(name) for name in INPUT_NAMES[1:]],
+    ]
     with pytest.raises(ValueError, match="mix"):
         GtcrnEnhancer(session=IdentitySession(inputs=broken))
 
@@ -259,7 +263,9 @@ def _speech_like(samples: int = 16_000 * 3, seed: int = 3) -> numpy.ndarray:
     rng = numpy.random.default_rng(seed)
     t = numpy.arange(samples)
     signal = numpy.zeros(samples)
-    for harmonic, amplitude in enumerate([1.0, 0.7, 0.5, 0.35, 0.25, 0.18, 0.12, 0.08], start=1):
+    for harmonic, amplitude in enumerate(
+        [1.0, 0.7, 0.5, 0.35, 0.25, 0.18, 0.12, 0.08], start=1
+    ):
         signal += amplitude * numpy.sin(
             2 * numpy.pi * 120 * harmonic * t / 16_000 + rng.uniform(0, 6.28)
         )
@@ -296,10 +302,14 @@ def test_real_model_preserves_speech_like_signal():
 def test_real_model_on_official_noisy_wav_is_stable():
     path = os.environ.get("VOICE_IN_GTCRN_WAV", "")
     if not path or not Path(path).is_file():
-        pytest.skip("set VOICE_IN_GTCRN_WAV to a 16 kHz mono WAV for the official fixture")
+        pytest.skip(
+            "set VOICE_IN_GTCRN_WAV to a 16 kHz mono WAV for the official fixture"
+        )
     with wave.open(path) as source:
         assert source.getframerate() == 16_000 and source.getnchannels() == 1
-        pcm = numpy.frombuffer(source.readframes(source.getnframes()), dtype=numpy.int16)
+        pcm = numpy.frombuffer(
+            source.readframes(source.getnframes()), dtype=numpy.int16
+        )
     out = _run(GtcrnEnhancer(bundled_model_path()), pcm)
     assert numpy.isfinite(out).all()
     fed = len(pcm) - len(pcm) % 320  # _collect feeds whole 20 ms blocks only

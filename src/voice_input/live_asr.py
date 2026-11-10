@@ -78,7 +78,7 @@ class _SseLineParser:
             line, self._buffer = self._buffer.split(b"\n", 1)
             text = line.decode("utf-8", errors="replace").strip()
             if text.startswith("data:"):
-                payloads.append(text[len("data:"):].strip())
+                payloads.append(text[len("data:") :].strip())
         return payloads
 
 
@@ -99,11 +99,13 @@ class _ChunkedDecoder:
             try:
                 size = int(self._buffer[:index].split(b";")[0], 16)
             except ValueError as exc:
-                raise LiveAsrError(f"malformed chunked framing: {self._buffer[:index]!r}") from exc
+                raise LiveAsrError(
+                    f"malformed chunked framing: {self._buffer[:index]!r}"
+                ) from exc
             if len(self._buffer) < index + 2 + size + 2:
                 break  # 负载还没收满
-            out += self._buffer[index + 2:index + 2 + size]
-            self._buffer = self._buffer[index + 2 + size + 2:]
+            out += self._buffer[index + 2 : index + 2 + size]
+            self._buffer = self._buffer[index + 2 + size + 2 :]
             if size == 0:
                 self.terminated = True
         return bytes(out)
@@ -154,7 +156,9 @@ class LiveTranscriptStream:
         port = parts.port or (443 if parts.scheme == "https" else 80)
         query = f"model={model}&sample_rate={sample_rate}&channels={channels}&sample_format=s16le"
         path = f"{parts.path}?{query}"
-        connect: Connector = connector if connector is not None else asyncio.open_connection
+        connect: Connector = (
+            connector if connector is not None else asyncio.open_connection
+        )
         reader, writer = await connect(host, port)
         try:
             request_head = (
@@ -182,8 +186,10 @@ class LiveTranscriptStream:
                     error_field = parsed_fields.get("error", parsed_fields)
                     if isinstance(error_field, dict):
                         inner = cast("dict[str, Any]", error_field).get("message")
-                        message = str(inner) if inner is not None else json.dumps(
-                            error_field, ensure_ascii=False
+                        message = (
+                            str(inner)
+                            if inner is not None
+                            else json.dumps(error_field, ensure_ascii=False)
                         )
                     elif error_field is not None:
                         message = str(error_field)
@@ -191,7 +197,9 @@ class LiveTranscriptStream:
                 if status in (400, 404) and "streaming" in message:
                     raise LiveAsrUnsupported(f"live route rejects model: {message}")
                 if "busy" in message:
-                    raise LiveAsrError(f"asr model busy: {message}")  # 并发占用：瞬时，不计失败
+                    raise LiveAsrError(
+                        f"asr model busy: {message}"
+                    )  # 并发占用：瞬时，不计失败
                 raise LiveAsrError(f"live open failed: HTTP {status}: {message}")
         except BaseException:
             try:
@@ -247,7 +255,9 @@ class LiveTranscriptStream:
                     await self._wake.wait()
                 chunk, self._pending = bytes(self._pending), bytearray()
                 if chunk:
-                    self._writer.write(f"{len(chunk):x}\r\n".encode("ascii") + chunk + _CRLF)
+                    self._writer.write(
+                        f"{len(chunk):x}\r\n".encode("ascii") + chunk + _CRLF
+                    )
                     await self._writer.drain()
                 if self._eof_notified and not self._pending:
                     self._writer.write(b"0\r\n\r\n")
@@ -367,14 +377,18 @@ class LiveAsrTracker:
     def active_text(self) -> str:
         return self._active.text if self._active is not None else ""
 
-    async def update(self, frame: bytes, vad: Endpointer, *, endpoint_fired: bool = False) -> None:
+    async def update(
+        self, frame: bytes, vad: Endpointer, *, endpoint_fired: bool = False
+    ) -> None:
         """音频泵每帧调用：维护当前语音区间的流式会话。绝不抛出。"""
         if not self.enabled:
             return
         if vad.utterance_open:
             if self._active is None:
                 if not self._open_attempted:
-                    self._open_attempted = True  # 一条语音区间只开一次，失败即整段走批量
+                    self._open_attempted = (
+                        True  # 一条语音区间只开一次，失败即整段走批量
+                    )
                     self._active = await self._open_stream(vad.utterance_audio())
             else:
                 await self._active.feed(frame)
@@ -415,7 +429,9 @@ class LiveAsrTracker:
                 return None
             self._failures += 1
             if self._failures >= self._max_failures:
-                self._disable(f"{self._failures} consecutive live failures, last: {exc}")
+                self._disable(
+                    f"{self._failures} consecutive live failures, last: {exc}"
+                )
             else:
                 LOGGER.debug("live asr session failed (fallback batch): %s", exc)
             await asyncio.sleep(0.15)
@@ -423,7 +439,9 @@ class LiveAsrTracker:
         except OSError as exc:
             self._failures += 1
             if self._failures >= self._max_failures:
-                self._disable(f"{self._failures} consecutive live failures, last: {exc}")
+                self._disable(
+                    f"{self._failures} consecutive live failures, last: {exc}"
+                )
             LOGGER.debug("live asr session errored (fallback batch): %s", exc)
             await asyncio.sleep(0.15)
             return None
@@ -452,14 +470,22 @@ class LiveAsrTracker:
             if "busy" not in str(exc):
                 self._failures += 1
                 if self._failures >= self._max_failures:
-                    self._disable(f"{self._failures} consecutive live failures, last: {exc}")
-            LOGGER.debug("live asr open failed (utterance falls back to batch): %s", exc)
+                    self._disable(
+                        f"{self._failures} consecutive live failures, last: {exc}"
+                    )
+            LOGGER.debug(
+                "live asr open failed (utterance falls back to batch): %s", exc
+            )
             return None
         except OSError as exc:
             self._failures += 1
             if self._failures >= self._max_failures:
-                self._disable(f"{self._failures} consecutive live connect failures, last: {exc}")
-            LOGGER.debug("live asr connect failed (utterance falls back to batch): %s", exc)
+                self._disable(
+                    f"{self._failures} consecutive live connect failures, last: {exc}"
+                )
+            LOGGER.debug(
+                "live asr connect failed (utterance falls back to batch): %s", exc
+            )
             return None
         await stream.feed(initial_audio)
         return stream

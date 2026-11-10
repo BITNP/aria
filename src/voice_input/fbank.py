@@ -10,6 +10,7 @@ implementation of that constrained spec, kept dependency-free apart from numpy.
 The frontend operates on the 1.5 s identification window (or the whole longer
 utterance) assembled by voice_input.speaker.
 """
+
 from __future__ import annotations
 
 from typing import Final
@@ -38,7 +39,10 @@ def extract(pcm16le: bytes) -> numpy.ndarray:
     count = 1 + (samples.size - FRAME_LENGTH_SAMPLES) // FRAME_SHIFT_SAMPLES
     frames = numpy.stack(
         [
-            samples[index * FRAME_SHIFT_SAMPLES : index * FRAME_SHIFT_SAMPLES + FRAME_LENGTH_SAMPLES]
+            samples[
+                index * FRAME_SHIFT_SAMPLES : index * FRAME_SHIFT_SAMPLES
+                + FRAME_LENGTH_SAMPLES
+            ]
             for index in range(count)
         ]
     )
@@ -55,12 +59,16 @@ def extract(pcm16le: bytes) -> numpy.ndarray:
 
 def _frontend_window() -> numpy.ndarray:
     indices = numpy.arange(FRAME_LENGTH_SAMPLES, dtype=numpy.float32)
-    return (0.5 - 0.5 * numpy.cos(2 * numpy.pi * indices / (FRAME_LENGTH_SAMPLES - 1))) ** WINDOW_POWER
+    return (
+        0.5 - 0.5 * numpy.cos(2 * numpy.pi * indices / (FRAME_LENGTH_SAMPLES - 1))
+    ) ** WINDOW_POWER
 
 
 def _mel_filters() -> numpy.ndarray:
     """(80, 256) triangular mel filters over the 512-point power spectrum bins."""
-    frequencies = numpy.arange(FFT_SIZE // 2, dtype=numpy.float32) * (SAMPLE_RATE_HZ / FFT_SIZE)
+    frequencies = numpy.arange(FFT_SIZE // 2, dtype=numpy.float32) * (
+        SAMPLE_RATE_HZ / FFT_SIZE
+    )
     mel_all = 1127.0 * numpy.log(1.0 + frequencies / 700.0)
     points = numpy.linspace(
         _hz_to_mel(MEL_LOW_HZ), _hz_to_mel(SAMPLE_RATE_HZ / 2), NUM_BINS + 2

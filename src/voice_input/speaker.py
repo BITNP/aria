@@ -30,6 +30,7 @@ session-scoped concept for personalization only, never an authority.
 If the bundled model cannot be loaded, ``build_speaker_identifier`` returns
 None and the pipeline degrades to no-ID mode with a warning.
 """
+
 from __future__ import annotations
 
 import logging
@@ -130,10 +131,14 @@ class CamppEmbedder:
         features = extract_fbank(pcm16le)
         if features.size == 0:
             raise ValueError("insufficient audio for CAM++ FBank embedding")
-        raw = self._session.run(None, {self._input_name: features[numpy.newaxis, :, :]})[0]
+        raw = self._session.run(
+            None, {self._input_name: features[numpy.newaxis, :, :]}
+        )[0]
         output = numpy.asarray(raw).reshape(-1).astype(numpy.float64)
         if output.size != self._dimension or not numpy.isfinite(output).all():
-            raise ValueError(f"CAM++ embedding output must be {self._dimension}D and finite")
+            raise ValueError(
+                f"CAM++ embedding output must be {self._dimension}D and finite"
+            )
         norm = float(numpy.linalg.norm(output))
         if norm == 0:
             raise ValueError("CAM++ embedding has zero norm")
@@ -185,19 +190,28 @@ class SpeakerIdentifier:
             decision = self._mint(vector)
             LOGGER.debug(
                 "speaker mint %s (best %s=%.3f < %.3f, %d known)",
-                decision, best_id, best, self._reuse_threshold, len(matches),
+                decision,
+                best_id,
+                best,
+                self._reuse_threshold,
+                len(matches),
             )
             return decision
         if second is not None and best - second <= AMBIGUITY_GAP:
             LOGGER.debug(
                 "speaker ambiguous (best %s=%.3f, second=%.3f, gap <= %.2f)",
-                best_id, best, second, AMBIGUITY_GAP,
+                best_id,
+                best,
+                second,
+                AMBIGUITY_GAP,
             )
             return None
         self._enroll(best_id, vector)
         LOGGER.debug(
             "speaker reuse %s (best=%.3f, second=%s, threshold=%.3f)",
-            best_id, best, f"{second:.3f}" if second is not None else "none",
+            best_id,
+            best,
+            f"{second:.3f}" if second is not None else "none",
             self._reuse_threshold,
         )
         return best_id
@@ -299,12 +313,18 @@ def _cosine(left: Embedding, right: Embedding) -> float:
     return dot / (left_norm * right_norm)
 
 
-def _preferred_providers(onnxruntime: object, providers: Sequence[str] | None) -> list[str]:
+def _preferred_providers(
+    onnxruntime: object, providers: Sequence[str] | None
+) -> list[str]:
     """CUDA first when available, CPU otherwise; honours an explicit override."""
     if providers:
         return list(providers)
     available = set(onnxruntime.get_available_providers())  # type: ignore[attr-defined]
-    preferred = [provider for provider in ("CUDAExecutionProvider", "CPUExecutionProvider") if provider in available]
+    preferred = [
+        provider
+        for provider in ("CUDAExecutionProvider", "CPUExecutionProvider")
+        if provider in available
+    ]
     return preferred or ["CPUExecutionProvider"]
 
 

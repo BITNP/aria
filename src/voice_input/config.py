@@ -16,6 +16,7 @@ In-process GTCRN speech enhancement runs between capture and endpointing by
 default (ADR-0006); VOICE_IN_DENOISE=0 disables it and the pipeline forwards
 raw microphone audio.
 """
+
 from __future__ import annotations
 
 import os
@@ -111,13 +112,20 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
             source, VAD_SPEECH_THRESHOLD_KEY, DEFAULT_SPEECH_THRESHOLD, minimum=1
         ),
         trailing_silence_frames=_parse_int(
-            source, VAD_TRAILING_SILENCE_FRAMES_KEY, DEFAULT_TRAILING_SILENCE_FRAMES, minimum=1
+            source,
+            VAD_TRAILING_SILENCE_FRAMES_KEY,
+            DEFAULT_TRAILING_SILENCE_FRAMES,
+            minimum=1,
         ),
-        max_frames=_parse_int(source, VAD_MAX_FRAMES_KEY, DEFAULT_MAX_FRAMES, minimum=1),
+        max_frames=_parse_int(
+            source, VAD_MAX_FRAMES_KEY, DEFAULT_MAX_FRAMES, minimum=1
+        ),
         pre_roll_frames=_parse_int(
             source, VAD_PRE_ROLL_FRAMES_KEY, DEFAULT_PRE_ROLL_FRAMES, minimum=0
         ),
-        vad_engine=_parse_choice(source, VAD_ENGINE_KEY, DEFAULT_VAD_ENGINE, _VAD_ENGINES),
+        vad_engine=_parse_choice(
+            source, VAD_ENGINE_KEY, DEFAULT_VAD_ENGINE, _VAD_ENGINES
+        ),
         vad_threshold=_parse_float(source, VAD_THRESHOLD_KEY, DEFAULT_VAD_THRESHOLD),
         vad_min_speech_ms=_parse_int(
             source, VAD_MIN_SPEECH_MS_KEY, DEFAULT_VAD_MIN_SPEECH_MS, minimum=1
@@ -143,7 +151,9 @@ def _parse_bool(source: Mapping[str, str], key: str, *, default: bool) -> bool:
     return raw.lower() in _TRUE_VALUES
 
 
-def _parse_choice(source: Mapping[str, str], key: str, default: str, allowed: tuple[str, ...]) -> str:
+def _parse_choice(
+    source: Mapping[str, str], key: str, default: str, allowed: tuple[str, ...]
+) -> str:
     raw = source.get(key, "").strip().lower()
     if raw == "":
         return default
@@ -183,7 +193,9 @@ def _require_ws_scheme(value: str, key: str) -> None:
         raise ConfigError(key=key, reason="must be a ws:// or wss:// URL")
 
 
-def _parse_int(source: Mapping[str, str], key: str, default: int, *, minimum: int) -> int:
+def _parse_int(
+    source: Mapping[str, str], key: str, default: int, *, minimum: int
+) -> int:
     raw = source.get(key, "").strip()
     if raw == "":
         return default

@@ -33,6 +33,7 @@ degrade this connection to the energy endpointer (one warning; reconnect or
 restart to recover), and a model that cannot be loaded at startup never builds
 -- ``build_vad_model`` returns None and the pipeline runs on energy VAD.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -133,9 +134,13 @@ class SileroVadModel:
             if model_path is None:
                 raise ValueError("either model_path or session must be given")
             if not model_path.is_file():
-                raise FileNotFoundError(f"bundled Silero VAD model not found: {model_path}")
+                raise FileNotFoundError(
+                    f"bundled Silero VAD model not found: {model_path}"
+                )
             options = onnxruntime.SessionOptions()
-            options.intra_op_num_threads = 1  # official OnnxWrapper settings: one thread
+            options.intra_op_num_threads = (
+                1  # official OnnxWrapper settings: one thread
+            )
             options.inter_op_num_threads = 1
             session = onnxruntime.InferenceSession(
                 str(model_path),
@@ -161,17 +166,25 @@ class SileroVadModel:
             outputs = self._session.run(
                 None,
                 {
-                    "input": numpy.ascontiguousarray(fed.reshape(1, -1), dtype=numpy.float32),
+                    "input": numpy.ascontiguousarray(
+                        fed.reshape(1, -1), dtype=numpy.float32
+                    ),
                     "state": self._state,
                     "sr": numpy.array(SAMPLE_RATE_HZ, dtype=numpy.int64),
                 },
             )
             prob = numpy.asarray(outputs[0], dtype=numpy.float32).reshape(-1)
             state = numpy.asarray(outputs[1], dtype=numpy.float32)
-            if prob.size != 1 or not numpy.isfinite(prob).all() or not numpy.isfinite(state).all():
+            if (
+                prob.size != 1
+                or not numpy.isfinite(prob).all()
+                or not numpy.isfinite(state).all()
+            ):
                 raise ValueError("Silero VAD returned a non-finite chunk result")
             if state.shape != STATE_SHAPE:
-                raise ValueError(f"Silero VAD state shape {state.shape} != {STATE_SHAPE}")
+                raise ValueError(
+                    f"Silero VAD state shape {state.shape} != {STATE_SHAPE}"
+                )
             self._state = state
             self._context = fed[-CONTEXT_SAMPLES:].astype(numpy.float32)
             probs.append(float(prob[0]))
@@ -264,7 +277,9 @@ class SileroEndpointer:
             return self._fallback.utterance_audio()
         if not self._triggered:
             return b""
-        return self._slice(max(self._speech_start - SPEECH_PAD_SAMPLES, self._pcm_start), self._fed)
+        return self._slice(
+            max(self._speech_start - SPEECH_PAD_SAMPLES, self._pcm_start), self._fed
+        )
 
     async def aclose(self) -> None:
         await self._fallback.aclose()
@@ -280,7 +295,9 @@ class SileroEndpointer:
                 self._triggered = True
                 self._speech_start = cur
                 LOGGER.debug(
-                    "silero speech start at %d ms (prob %.3f)", cur // _SAMPLES_PER_MS, prob
+                    "silero speech start at %d ms (prob %.3f)",
+                    cur // _SAMPLES_PER_MS,
+                    prob,
                 )
             elif cur - self._speech_start >= self._max_samples:
                 # official layout: a high probability while already triggered falls
@@ -302,7 +319,9 @@ class SileroEndpointer:
         segment: SpeechSegment | None = None
         if end - start > self._min_speech_samples:
             segment = SpeechSegment(
-                pcm16le=self._slice(max(start - SPEECH_PAD_SAMPLES, self._pcm_start), end),
+                pcm16le=self._slice(
+                    max(start - SPEECH_PAD_SAMPLES, self._pcm_start), end
+                ),
                 duration_ms=(end - start) // _SAMPLES_PER_MS,
             )
             LOGGER.debug(
@@ -324,7 +343,9 @@ class SileroEndpointer:
 
     def _take_chunk(self) -> numpy.ndarray:
         first = self._chunk_pos - self._pcm_start
-        chunk = numpy.frombuffer(self._pcm, dtype=numpy.int16)[first : first + WINDOW_SAMPLES]
+        chunk = numpy.frombuffer(self._pcm, dtype=numpy.int16)[
+            first : first + WINDOW_SAMPLES
+        ]
         return chunk.astype(numpy.float32) / 32768.0
 
     def _slice(self, start: int, end: int) -> bytes:
@@ -351,8 +372,13 @@ def _validate_session(session: _VadSession) -> None:
     """Reject anything that is not the official streaming Silero VAD graph."""
     inputs = {node.name: node for node in session.get_inputs()}
     if set(inputs) != {"input", "state", "sr"}:
-        raise ValueError(f"Silero VAD graph must expose input/state/sr, got {sorted(inputs)}")
-    if inputs["input"].type != "tensor(float)" or inputs["state"].type != "tensor(float)":
+        raise ValueError(
+            f"Silero VAD graph must expose input/state/sr, got {sorted(inputs)}"
+        )
+    if (
+        inputs["input"].type != "tensor(float)"
+        or inputs["state"].type != "tensor(float)"
+    ):
         raise ValueError("Silero VAD input/state must be float tensors")
     if inputs["sr"].type != "tensor(int64)":
         raise ValueError("Silero VAD sr must be an int64 tensor")
@@ -365,10 +391,18 @@ def _validate_session(session: _VadSession) -> None:
     # the exact shape is enforced at runtime in run_chunks instead
     outputs = list(session.get_outputs())
     if len(outputs) != 2:
-        raise ValueError("Silero VAD graph must return exactly the probability and the next state")
+        raise ValueError(
+            "Silero VAD graph must return exactly the probability and the next state"
+        )
     out_shape = list(outputs[0].shape)
-    if outputs[0].type != "tensor(float)" or out_shape[-1:] != [1] or len(out_shape) != 2:
-        raise ValueError(f"Silero VAD probability output shape {out_shape} must be [batch, 1]")
+    if (
+        outputs[0].type != "tensor(float)"
+        or out_shape[-1:] != [1]
+        or len(out_shape) != 2
+    ):
+        raise ValueError(
+            f"Silero VAD probability output shape {out_shape} must be [batch, 1]"
+        )
 
 
 def bundled_model_path() -> Path:

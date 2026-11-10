@@ -1,4 +1,5 @@
 """Tests for the voice input pipeline pieces. Headless: no device, network, or hub needed."""
+
 from __future__ import annotations
 
 import pytest

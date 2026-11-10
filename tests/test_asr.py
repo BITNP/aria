@@ -1,4 +1,5 @@
 """ASR client: request building, parsing, failure handling (no real network)."""
+
 from __future__ import annotations
 
 import asyncio

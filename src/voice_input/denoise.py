@@ -28,6 +28,7 @@ the model (raw samples flow through the frame buffer; one warning, restart to
 re-enable).  A model that cannot be loaded at startup degrades to no
 enhancement at all -- ``build_enhancer`` returns None with a warning.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -59,7 +60,11 @@ _EXPECTED_METADATA: Final = {
     "window_type": "hann_sqrt",
     "sample_rate": "16000",
 }
-_CACHE_PAIRS: Final = (("conv_cache", "conv_cache_out"), ("tra_cache", "tra_cache_out"), ("inter_cache", "inter_cache_out"))
+_CACHE_PAIRS: Final = (
+    ("conv_cache", "conv_cache_out"),
+    ("tra_cache", "tra_cache_out"),
+    ("inter_cache", "inter_cache_out"),
+)
 
 _MIX_NAME: Final = "mix"
 _ENH_NAME: Final = "enh"
@@ -200,7 +205,10 @@ class GtcrnEnhancer:
         try:
             outputs = self._session.run(
                 [_ENH_NAME] + [out for _, out in _CACHE_PAIRS],
-                {_MIX_NAME: numpy.ascontiguousarray(mix, dtype=numpy.float32), **self._caches},
+                {
+                    _MIX_NAME: numpy.ascontiguousarray(mix, dtype=numpy.float32),
+                    **self._caches,
+                },
             )
             enh = numpy.asarray(outputs[0], dtype=numpy.float32)
             caches = {
@@ -223,13 +231,16 @@ class GtcrnEnhancer:
         self._caches = caches
         self._failures = 0
         enhanced = numpy.fft.irfft(
-            enh.reshape(NUM_BINS, 2)[:, 0] + 1j * enh.reshape(NUM_BINS, 2)[:, 1], n=N_FFT
+            enh.reshape(NUM_BINS, 2)[:, 0] + 1j * enh.reshape(NUM_BINS, 2)[:, 1],
+            n=N_FFT,
         ).astype(numpy.float32)
         self._overlap[:-HOP_SAMPLES] = self._overlap[HOP_SAMPLES:]
         self._overlap[HOP_SAMPLES:] = 0.0
         self._overlap += enhanced * self._window
         if not self._started:
-            self._started = True  # priming hop: the analysis buffer was still half zeros
+            self._started = (
+                True  # priming hop: the analysis buffer was still half zeros
+            )
             return
         self._emit(self._overlap[:HOP_SAMPLES])
 
@@ -248,7 +259,9 @@ class GtcrnEnhancer:
                 exc,
             )
         else:
-            LOGGER.debug("GTCRN hop failed, raw samples passed through (x%d)", self._failures)
+            LOGGER.debug(
+                "GTCRN hop failed, raw samples passed through (x%d)", self._failures
+            )
 
     def _emit(self, samples: Array) -> None:
         # round-half-even then clamp: float 1.0 must become 32767, never wrap
@@ -285,11 +298,18 @@ def _validate_session(session: _DenoiseSession) -> dict[str, list[int]]:
         or inputs[_MIX_NAME].type != "tensor(float)"
     ):
         raise ValueError("GTCRN model must expose a [1, 257, 1, 2] float32 'mix' input")
-    if outputs.get(_ENH_NAME) is None or list(outputs[_ENH_NAME].shape) != complex_shape:
-        raise ValueError("GTCRN model must expose a [1, 257, 1, 2] float32 'enh' output")
+    if (
+        outputs.get(_ENH_NAME) is None
+        or list(outputs[_ENH_NAME].shape) != complex_shape
+    ):
+        raise ValueError(
+            "GTCRN model must expose a [1, 257, 1, 2] float32 'enh' output"
+        )
     for input_name, output_name in _CACHE_PAIRS:
         if inputs.get(input_name) is None or outputs.get(output_name) is None:
-            raise ValueError(f"GTCRN model must expose cache '{input_name}' / '{output_name}'")
+            raise ValueError(
+                f"GTCRN model must expose cache '{input_name}' / '{output_name}'"
+            )
         if list(inputs[input_name].shape) != list(outputs[output_name].shape):
             raise ValueError(f"GTCRN cache '{input_name}' input/output shapes differ")
     shapes: dict[str, list[int]] = {}
@@ -323,7 +343,9 @@ def build_enhancer(
     try:
         enhancer = GtcrnEnhancer(path)
     except Exception as exc:  # noqa: BLE001 - any load fault degrades to raw audio
-        LOGGER.warning("speech enhancement load failed (%s); running without denoise", exc)
+        LOGGER.warning(
+            "speech enhancement load failed (%s); running without denoise", exc
+        )
         return None
     LOGGER.info(
         "speech enhancement enabled (revision=%s onnx_provider=%s)",

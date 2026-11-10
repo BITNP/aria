@@ -1,4 +1,5 @@
 """FBank frontend tests: frame layout, determinism, edge cases (offline)."""
+
 from __future__ import annotations
 
 import math

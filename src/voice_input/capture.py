@@ -4,6 +4,7 @@ Uses sounddevice (PortAudio) for a blocking raw PCM16 mono 16 kHz capture loop o
 blocks, matching the frame contract in voice_input.vad.  A reader callable is injected
 so tests never touch a real device.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +21,7 @@ LOGGER = logging.getLogger(__name__)
 RawBlock = bytes
 RawBlockReader = Callable[[], Awaitable[RawBlock | None]]
 
+
 class MicReader(Protocol):
     """Anything that yields 20 ms PCM16 blocks until None."""
 
@@ -34,10 +36,14 @@ class PortAudioMic(MicReader):
     audio callback path off the event loop without device-specific thread wiring.
     """
 
-    def __init__(self, device: str | None = None, reader: RawBlockReader | None = None) -> None:
+    def __init__(
+        self, device: str | None = None, reader: RawBlockReader | None = None
+    ) -> None:
         self._device = device
         self._injected_reader = reader is not None
-        self._reader: RawBlockReader = reader if reader is not None else self._sounddevice_read
+        self._reader: RawBlockReader = (
+            reader if reader is not None else self._sounddevice_read
+        )
         self._queue: asyncio.Queue[RawBlock | None] | None = None
         self._task: asyncio.Task[None] | None = None
         self._stream: RawInputStream | None = None

@@ -9,6 +9,7 @@ Pure tones are not voiceprints, so the distinct-audio case pins a strict
 threshold (0.95) to test the minting semantics; the shipping default is the
 real-speech operating point (ADR-0009).
 """
+
 from __future__ import annotations
 
 import math
@@ -29,14 +30,14 @@ from voice_input.speaker import (
 
 MODEL_PATH = bundled_model_path()
 pytestmark = pytest.mark.skipif(
-    not MODEL_PATH.is_file(), reason="bundled CAM++ model not present (src/voice_input/models/)"
+    not MODEL_PATH.is_file(),
+    reason="bundled CAM++ model not present (src/voice_input/models/)",
 )
 
 
 def _tone(frequency: float, frames: int = 24_000) -> bytes:
-    samples = (
-        12_000
-        * numpy.sin(2 * math.pi * frequency * numpy.arange(frames) / 16_000)
+    samples = 12_000 * numpy.sin(
+        2 * math.pi * frequency * numpy.arange(frames) / 16_000
     )
     return samples.astype("<i2").tobytes()
 
@@ -105,7 +106,9 @@ def test_same_speaker_disjoint_segments_share_id_at_operating_point():
     with wave.open(os.environ["VOICE_IN_CAMPP_SPEECH_WAV"]) as reader:
         assert reader.getframerate() == 16_000 and reader.getnchannels() == 1
         if reader.getnframes() < int(7.5 * 16_000):
-            pytest.skip("VOICE_IN_CAMPP_SPEECH_WAV must be >= 7.5 s for two disjoint windows")
+            pytest.skip(
+                "VOICE_IN_CAMPP_SPEECH_WAV must be >= 7.5 s for two disjoint windows"
+            )
 
         def segment(seconds: float) -> bytes:
             reader.setpos(int(seconds * 16_000))
@@ -126,7 +129,9 @@ def test_same_speaker_disjoint_segments_share_id_at_operating_point():
 def test_official_runtime_golden_fixture_parity():
     """Opt-in parity against fixtures produced by the official 3D-Speaker runtime."""
     pcm = Path(os.environ["MIC_CAMPP_GOLDEN_PCM_PATH"]).read_bytes()
-    expected_embedding = numpy.load(os.environ["MIC_CAMPP_GOLDEN_EMBEDDING_PATH"]).reshape(-1)
+    expected_embedding = numpy.load(
+        os.environ["MIC_CAMPP_GOLDEN_EMBEDDING_PATH"]
+    ).reshape(-1)
     actual = numpy.asarray(CamppEmbedder(MODEL_PATH).embed(pcm))
     expected = expected_embedding / float(numpy.linalg.norm(expected_embedding))
     assert numpy.dot(actual, expected) >= 0.9999

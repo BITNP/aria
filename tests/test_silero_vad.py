@@ -10,6 +10,7 @@ T2 (bundled model present, else skipped): the real model sees deterministic
 noise and produces no endpoints; an official speech wav can additionally be fed
 via VOICE_IN_SILERO_WAV to assert real segmentation.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +44,9 @@ class ScriptedModel:
 
     model_revision = "scripted"
 
-    def __init__(self, probs: Sequence[float] | None = None, fail_calls: int = 0) -> None:
+    def __init__(
+        self, probs: Sequence[float] | None = None, fail_calls: int = 0
+    ) -> None:
         self._probs = list(probs or [])
         self._fail_calls = fail_calls
         self.calls = 0
@@ -68,10 +71,16 @@ def _endpointer(
     max_frames: int = 1_500,
 ) -> SileroEndpointer:
     fallback = EnergyEndpointer(
-        EndpointDetector(threshold=300, trailing_silence_frames=2, max_frames=100, pre_roll_frames=1)
+        EndpointDetector(
+            threshold=300, trailing_silence_frames=2, max_frames=100, pre_roll_frames=1
+        )
     )
     return SileroEndpointer(
-        model, fallback=fallback, threshold=threshold, min_speech_ms=min_speech_ms, max_frames=max_frames
+        model,
+        fallback=fallback,
+        threshold=threshold,
+        min_speech_ms=min_speech_ms,
+        max_frames=max_frames,
     )
 
 
@@ -225,7 +234,9 @@ def test_idle_buffer_stays_bounded():
 
 
 class _Node:
-    def __init__(self, name: str, shape: list[Any], type_name: str = "tensor(float)") -> None:
+    def __init__(
+        self, name: str, shape: list[Any], type_name: str = "tensor(float)"
+    ) -> None:
         self.name = name
         self.shape = shape
         self.type = type_name
@@ -316,7 +327,10 @@ def test_runtime_state_shape_guard_rejects_mismatched_state():
 
     class BadStateSession(ScriptedSession):
         def run(self, output_names, input_feed, run_options=None):  # type: ignore[no-untyped-def]
-            return [numpy.array([[0.2]], dtype=numpy.float32), numpy.zeros((2, 1, 64), numpy.float32)]
+            return [
+                numpy.array([[0.2]], dtype=numpy.float32),
+                numpy.zeros((2, 1, 64), numpy.float32),
+            ]
 
     model = SileroVadModel(session=BadStateSession())  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="state shape"):
@@ -335,7 +349,9 @@ BASE_ENV = {
 def test_build_endpointer_defaults_to_silero_when_model_present():
     endpointer = build_endpointer(load_settings(BASE_ENV))
     asyncio.run(endpointer.aclose())
-    expected = "SileroEndpointer" if bundled_model_path().is_file() else "EnergyEndpointer"
+    expected = (
+        "SileroEndpointer" if bundled_model_path().is_file() else "EnergyEndpointer"
+    )
     assert endpointer.__class__.__name__ == expected
 
 
@@ -377,7 +393,8 @@ def test_real_model_keeps_quiet_noise_endpoint_free():
     noise = (rng.normal(0, 0.02, size=16_000 * 8) * 32768).astype(numpy.int16)
     endpointer = _endpointer(cast(Any, build_vad_model()))
     frames = [
-        noise[start : start + 320].tobytes() for start in range(0, len(noise) - 319, 320)
+        noise[start : start + 320].tobytes()
+        for start in range(0, len(noise) - 319, 320)
     ]
     segments, _, _ = _feed(endpointer, frames)
     assert segments == []
@@ -388,14 +405,20 @@ def test_real_model_keeps_quiet_noise_endpoint_free():
 def test_real_model_segments_official_speech_wav():
     path = os.environ.get("VOICE_IN_SILERO_WAV", "")
     if not path or not Path(path).is_file():
-        pytest.skip("set VOICE_IN_SILERO_WAV to a 16 kHz mono WAV for the speech fixture")
+        pytest.skip(
+            "set VOICE_IN_SILERO_WAV to a 16 kHz mono WAV for the speech fixture"
+        )
     import numpy
 
     with wave.open(path) as source:
         assert source.getframerate() == 16_000 and source.getnchannels() == 1
-        pcm = numpy.frombuffer(source.readframes(source.getnframes()), dtype=numpy.int16)
+        pcm = numpy.frombuffer(
+            source.readframes(source.getnframes()), dtype=numpy.int16
+        )
     endpointer = _endpointer(cast(Any, build_vad_model()))
-    frames = [pcm[start : start + 320].tobytes() for start in range(0, len(pcm) - 319, 320)]
+    frames = [
+        pcm[start : start + 320].tobytes() for start in range(0, len(pcm) - 319, 320)
+    ]
     segments, _, _ = _feed(endpointer, frames)
     assert segments, "real speech must produce at least one endpoint"
     speech_ms = sum(segment.duration_ms for segment in segments)
