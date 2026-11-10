@@ -168,11 +168,6 @@ wheels = [
     { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/7b/3d/2e4bc4fd1ef9770871669adb348d612a6e4786b303a23f9935b81c48dd60/httpx2-2.16.0-py3-none-any.whl", hash = "sha256:fd2c5d7909e8d86fe92d53020c310ca0e4e431b838c207c5754b9bbf0308d49a", size = 97880, upload-time = "2026-10-21T07:09:44.01Z" },
 ]
 
-[package.optional-dependencies]
-ws = [
-    { name = "wsproto" },
-]
-
 [[package]]
 name = "httpx2-jsfetch"
 version = "1.0"
@@ -402,11 +397,12 @@ name = "raspberrygirl-voice-input"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "httpx2", extra = ["ws"] },
+    { name = "httpx2" },
     { name = "numpy" },
     { name = "onnxruntime" },
     { name = "python-dotenv" },
     { name = "sounddevice" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -414,16 +410,16 @@ dev = [
     { name = "basedpyright" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "httpx2", extras = ["ws"], specifier = ">=2.16,<3" },
+    { name = "httpx2", specifier = ">=2.16,<3" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "onnxruntime", specifier = ">=1.20,<2" },
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "sounddevice", specifier = "==0.5.6" },
+    { name = "websockets", specifier = "==17.4" },
 ]
 
 [package.metadata.requires-dev]
@@ -431,7 +427,6 @@ dev = [
     { name = "basedpyright", specifier = ">=1.31,<2" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.12" },
-    { name = "websockets", specifier = ">=17.4,<18" },
 ]
 
 [[package]]
@@ -626,16 +621,4 @@ wheels = [
     { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/29/3a/a05bc57eadcd7e8e072d917888128e6d22e1203984afb21a8da3198982fe/websockets-17.4-pp312-pypy312_pp80-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:868744c68e9342768888c7326604da2228c19bb6946aa46b5f9e1ac32ea8d40b", size = 218356, upload-time = "2026-10-30T15:10:31.432Z" },
     { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/b2/49/eed86bfb8863093a82cbaa52c9159be1ce2374d5ace6fe1f8e8031567e7d/websockets-17.4-pp312-pypy312_pp80-win_amd64.whl", hash = "sha256:829bcaa90be8737c132d9515d6a466e8528e3b3d050d3f3466f36ea94d3beb48", size = 306838, upload-time = "2026-10-30T15:10:32.954Z" },
     { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/eb/27/9db924cb0dbf22eade78d98fbae77790f9bf6bc729e6ab29aef9d68e4156/websockets-17.4-py3-none-any.whl", hash = "sha256:c6bd2c9781915592b209160d0f017d4c7c82ad53075e6b0c24d2a89299e7f9e9", size = 212900, upload-time = "2026-10-30T15:10:34.482Z" },
-]
-
-[[package]]
-name = "wsproto"
-version = "1.3.2"
-source = { registry = "https://mirrors.cernet.edu.cn/pypi/web/simple" }
-dependencies = [
-    { name = "h11" },
-]
-sdist = { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/c7/79/12135bdf8b9c9367b8701c2c19a14c913c120b882d50b014ca0d38083c2c/wsproto-1.3.2.tar.gz", hash = "sha256:b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294", size = 50116, upload-time = "2025-11-20T18:18:01.871Z" }
-wheels = [
-    { url = "https://mirrors.bfsu.edu.cn/pypi/web/packages/a4/f5/10b68b7b1544245097b2a1b8238f66f2fc6dcaeb24ba5d917f52bd2eed4f/wsproto-1.3.2-py3-none-any.whl", hash = "sha256:61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584", size = 24405, upload-time = "2025-11-20T18:18:00.454Z" },
 ]
