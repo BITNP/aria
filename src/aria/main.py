@@ -24,6 +24,7 @@ import argparse
 import asyncio
 import logging
 import os
+import random
 import time
 import wave
 from pathlib import Path
@@ -54,7 +55,19 @@ LOGGER = logging.getLogger(__name__)
 
 ENDPOINT_QUEUE_SIZE = 4
 MAX_TEXT_LENGTH = 8192
-HUB_RECONNECT_DELAY_SECONDS = 3.0
+# Hub reconnect backoff, the schedule shared by loom / aria / lumen: start at
+# BASE, double per failed attempt up to MAX, jitter +-20% so modules that were
+# dropped together do not retry in lockstep, reset once a connection is up.
+HUB_RECONNECT_BASE_SECONDS = 1.0
+HUB_RECONNECT_MAX_SECONDS = 30.0
+RECONNECT_JITTER_RATIO = 0.2
+
+
+def _with_reconnect_jitter(seconds: float) -> float:
+    """Seconds to actually sleep for ``seconds``: uniform jitter of +-20%."""
+    spread = seconds * RECONNECT_JITTER_RATIO
+    return seconds + random.uniform(-spread, spread)
+
 
 LOG_LEVEL_KEY = "ARIA_LOG_LEVEL"
 DEPS_LOG_LEVEL_KEY = "ARIA_DEPS_LOG_LEVEL"
@@ -431,22 +444,38 @@ def _reconnectable(exc: BaseException) -> bool:
 
 
 async def run() -> None:
-    """Entry loop: connect to the hub with reconnection until interrupted."""
+    """Entry loop: connect to the hub with reconnection until interrupted.
+
+    Reconnect backoff matches loom / lumen: exponential from
+    HUB_RECONNECT_BASE_SECONDS, doubling up to HUB_RECONNECT_MAX_SECONDS,
+    jittered; reset once a connection has been established.  Handshake
+    failures are the only reconnectable errors proving nothing was ever
+    connected: InputClient raises HubConnectionError unwrapped, before the
+    TaskGroup, while established-connection drops always surface as another
+    (possibly wrapped) reconnectable error.
+    """
     settings = load_settings()
     if settings.standalone:
         await _run_standalone(settings)
         return
+    delay = HUB_RECONNECT_BASE_SECONDS
     while True:
         try:
             await _run_with_hub(settings)
+            delay = HUB_RECONNECT_BASE_SECONDS
         except BaseException as exc:
             # A dropped hub surfaces wrapped: TaskGroup raises the read/send
             # failures as an ExceptionGroup, which except-clauses on the
             # wrapped types never match.
             if not _reconnectable(exc):
                 raise
+            if not isinstance(exc, HubConnectionError):
+                delay = HUB_RECONNECT_BASE_SECONDS
             LOGGER.warning("hub connection failed: %s", exc)
-        await asyncio.sleep(HUB_RECONNECT_DELAY_SECONDS)
+        sleep_seconds = _with_reconnect_jitter(delay)
+        LOGGER.debug("reconnecting to hub in %.2fs", sleep_seconds)
+        await asyncio.sleep(sleep_seconds)
+        delay = min(delay * 2, HUB_RECONNECT_MAX_SECONDS)
 
 
 def main() -> None:

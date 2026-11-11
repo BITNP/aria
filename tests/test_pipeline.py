@@ -252,7 +252,7 @@ def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
         main_module, "load_settings", lambda *a: SimpleNamespace(standalone=False)
     )
     monkeypatch.setattr(main_module, "_run_with_hub", flaky)
-    monkeypatch.setattr(main_module, "HUB_RECONNECT_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(main_module, "HUB_RECONNECT_BASE_SECONDS", 0.0)
     try:
         asyncio.run(scenario())
     except ValueError:
@@ -260,6 +260,53 @@ def test_run_loop_reconnects_on_taskgroup_connection_failure(monkeypatch):
     else:
         raise AssertionError("the non-reconnectable failure must propagate")
     assert len(attempts) == 2  # reconnected after the wrapped connection error
+
+
+def test_reconnect_jitter_within_bounds():
+    from aria.main import RECONNECT_JITTER_RATIO, _with_reconnect_jitter
+
+    for seconds in (0.0, 1.0, 30.0):
+        for _ in range(100):
+            value = _with_reconnect_jitter(seconds)
+            assert (
+                seconds * (1 - RECONNECT_JITTER_RATIO)
+                <= value
+                <= seconds * (1 + RECONNECT_JITTER_RATIO)
+            )
+
+
+def test_run_loop_backoff_doubles_until_capped(monkeypatch):
+    """Handshake failures (never connected): delays double to the cap."""
+    from aria import main as main_module
+    from aria.hub_client import HubConnectionError
+
+    recorded: list[float] = []
+
+    class _StopLoop(Exception):
+        pass
+
+    def record(seconds: float) -> float:
+        recorded.append(seconds)
+        if len(recorded) == 7:
+            raise _StopLoop
+        return 0.0
+
+    async def never_connects(settings: object) -> None:
+        raise HubConnectionError("handshake refused")
+
+    async def scenario() -> None:
+        await main_module.run()
+
+    monkeypatch.setattr(
+        main_module, "load_settings", lambda *a: SimpleNamespace(standalone=False)
+    )
+    monkeypatch.setattr(main_module, "_run_with_hub", never_connects)
+    monkeypatch.setattr(main_module, "_with_reconnect_jitter", record)
+    try:
+        asyncio.run(scenario())
+    except _StopLoop:
+        pass
+    assert recorded == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
 
 
 def test_endpoint_dump_wav_carries_exact_bytes(tmp_path):
